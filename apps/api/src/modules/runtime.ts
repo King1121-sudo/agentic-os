@@ -1,0 +1,380 @@
+/**
+ * Agent Runtime (§5, §6) — the kernel execution pipeline:
+ *   EVENT → CONTEXT RESOLVER → MEMORY RETRIEVAL → PLANNER → STEPS (tool/skill/model)
+ *   → OBSERVATION → RESULT → MEMORY UPDATE → EVENT → NOTIFICATION
+ * Every step is traced, persisted (checkpointed), auditable, and controllable
+ * (pause/resume/stop/approve). Approvals suspend the execution and are resumed
+ * by the human decision (API) — with a timeout that fails the step safely.
+ */
+import type { DataPort, BrokerPort } from '../infra/types';
+import { iso, uuid } from '../infra/types';
+import { EventBus } from '../kernel/bus';
+import type { ModelRouter } from '../gateway/router';
+import type { ToolRegistry, ToolDef } from './tools';
+import { recordToolExecution } from './tools';
+import { evaluateGate, type ToolContext } from '../kernel/types';
+import * as store from './store';
+import { searchMemory, createMemory } from './memory';
+import { config } from '../config';
+import type {
+  AgentRecord, ExecutionRecord, Plan, PlanStep, TraceEntry, Observation,
+} from '@agentic/contracts';
+
+type StepOutcome = { ok: true; result: unknown } | { ok: false; error: string };
+
+export class AgentRuntime {
+  private control = new Map<string, { pause: boolean; stop: boolean; waiter: ((v: 'approved' | 'denied' | 'timeout') => void) | null }>();
+
+  constructor(
+    private db: DataPort,
+    private broker: BrokerPort,
+    private bus: EventBus,
+    private router: ModelRouter,
+    private tools: ToolRegistry,
+  ) {}
+
+  // ─── lifecycle ───────────────────────────────────────────────────────────
+  async run(opts: {
+    agent: AgentRecord; input: string; user_id: string;
+    project_id?: string | null; task_id?: string | null; autonomy_override?: number;
+  }): Promise<ExecutionRecord> {
+    const { agent, input } = opts;
+    const execId = uuid();
+    const startedAt = iso();
+
+    await store.insertExecution(this.db, {
+      id: execId, agent_id: agent.id, user_id: opts.user_id, input, project_id: opts.project_id ?? null,
+      task_id: opts.task_id ?? null, status: 'running', observations: [], trace: [],
+      started_at: startedAt,
+    });
+    await store.setAgentStatus(this.db, agent.id, 'thinking');
+    this.control.set(execId, { pause: false, stop: false, waiter: null });
+    await this.bus.emit('agent.started', { execution_id: execId, agent: agent.name, input: input.slice(0, 200) },
+      { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
+    await store.audit(this.db, { actor_type: 'agent', actor_id: agent.id, action: 'execution.start', execution_id: execId, meta: { input: input.slice(0, 300) } });
+
+    // fire-and-forget; state machine drives itself to a terminal state
+    this.drive(opts, execId).catch(async (e) => {
+      await this.finish(execId, 'failed', null, String(e?.message ?? e), agent);
+    });
+    return (await store.getExecution(this.db, execId))!;
+  }
+
+  private async drive(opts: { agent: AgentRecord; input: string; user_id: string; project_id?: string | null; task_id?: string | null; autonomy_override?: number }, execId: string): Promise<void> {
+    const { agent, input } = opts;
+    const trace: TraceEntry[] = [];
+    const observations: Observation[] = [];
+    const push = (entry: TraceEntry) => { trace.push(entry); };
+    const persist = () => store.updateExecution(this.db, execId, { trace: JSON.stringify(trace), observations: JSON.stringify(observations) });
+
+    const emitTrace = async (entry: TraceEntry) => {
+      push(entry); await persist();
+      await this.bus.emit('agent.thinking', { execution_id: execId, agent: agent.name, kind: entry.kind, message: entry.message },
+        { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
+    };
+
+    try {
+      // 1) CONTEXT RESOLVER — resolve project + task context
+      let project: any = null;
+      if (opts.project_id) project = await store.getProject(this.db, opts.project_id);
+      push({ ts: iso(), kind: 'state', message: `Context resolved${project ? ` (project: ${project.name})` : ''}` });
+
+      // 2) MEMORY RETRIEVAL
+      let memories: any[] = [];
+      if (agent.memory_policy.read) {
+        memories = await searchMemory(this.db, {
+          user_id: opts.user_id, query: input, k: agent.memory_policy.k,
+          types: agent.memory_policy.types?.length ? agent.memory_policy.types : undefined,
+          project_id: opts.project_id ?? null,
+        });
+        push({ ts: iso(), kind: 'memory', message: `Retrieved ${memories.length} memories`, data: memories.map(m => m.id) });
+      }
+
+      // 3) PLANNER
+      await store.setAgentStatus(this.db, agent.id, 'planning');
+      await this.bus.emit('agent.thinking', { execution_id: execId, agent: agent.name, phase: 'planning' },
+        { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
+      const planPrompt = [
+        agent.system_instructions || 'You are an agent in the Agentic OS. Create a short plan.',
+        `User request: ${input}`,
+        project ? `Project context: ${project.name} — ${project.description}` : '',
+        memories.length ? `Relevant memories:\n${memories.map(m => `- (${m.type}) ${m.summary}`).join('\n')}` : '',
+        `Produce a plan with the available tools: ${agent.tools.join(', ')}.`,
+      ].filter(Boolean).join('\n\n');
+      const planResp = await this.router.generate(
+        { capability: 'planning', system: PLANNER_SYSTEM, prompt: planPrompt, hint: { user_input: input, tools: agent.tools, memories: memories.map(m => m.id) } },
+        { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
+      );
+      const plan: Plan = planResp.plan ?? {
+        rationale: 'Fallback plan (planner returned no structured plan)',
+        steps: [{ kind: 'model', capability: 'reasoning', prompt: 'Answer the request directly.', input_from: 'all' }],
+      };
+      await store.updateExecution(this.db, execId, { plan: JSON.stringify(plan), tokens_in: planResp.input_tokens, tokens_out: planResp.output_tokens });
+      await this.bus.emit('plan.created', { execution_id: execId, agent: agent.name, rationale: plan.rationale, steps: plan.steps.length },
+        { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
+      await emitTrace({ ts: iso(), kind: 'plan', message: plan.rationale, data: { steps: plan.steps.length, model: planResp.model_id } });
+
+      // 4) STEP EXECUTION LOOP
+      await store.setAgentStatus(this.db, agent.id, 'executing');
+      const ctx: ToolContext = {
+        execution_id: execId, agent, user_id: opts.user_id,
+        emit: emitTrace, observe: (o) => { observations.push(o); },
+      };
+
+      for (let i = 0; i < plan.steps.length; i++) {
+        // control checks between every step
+        const ctl = this.control.get(execId);
+        if (ctl?.stop) { await this.finish(execId, 'cancelled', null, 'Stopped by user', agent); return; }
+        while (ctl?.pause) {
+          await store.setAgentStatus(this.db, agent.id, 'paused');
+          await store.updateExecution(this.db, execId, { status: 'paused' });
+          await this.bus.emit('agent.paused', { execution_id: execId, agent: agent.name }, { actor_type: 'user', target_type: 'execution', target_id: execId }).catch(() => {});
+          await sleep(500);
+          if (this.control.get(execId)?.stop) { await this.finish(execId, 'cancelled', null, 'Stopped by user', agent); return; }
+          if (!this.control.get(execId)?.pause) break;
+        }
+        await store.setAgentStatus(this.db, agent.id, 'executing');
+        await store.updateExecution(this.db, execId, { current_step: i + 1, status: 'running' });
+
+        const step = plan.steps[i];
+        await this.bus.emit('agent.executing', { execution_id: execId, agent: agent.name, step: i + 1, total: plan.steps.length, kind: step.kind },
+          { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
+
+        const outcome = await this.executeStep(step, opts, execId, ctx, trace, observations, i);
+        if (!outcome.ok) {
+          // failure recovery: notify + fail execution (retry policy per-step could hook here)
+          await store.notify(this.db, {
+            user_id: opts.user_id, title: `Agent ${agent.name} failed`, message: outcome.error.slice(0, 300),
+            priority: 'high', category: 'agent', source: 'runtime', related_type: 'execution', related_id: execId,
+          });
+          await this.finish(execId, 'failed', null, outcome.error, agent);
+          return;
+        }
+        observations.push({ step: i + 1, source: step.kind, summary: summarizeOutcome(outcome.result), data: outcome.result as any });
+        await persist();
+      }
+
+      // 5) RESULT — final synthesis
+      const finalResp = await this.router.generate(
+        {
+          capability: 'writing', system: agent.system_instructions || 'You are an agent in the Agentic OS. Summarize what you did clearly and concisely.',
+          prompt: [
+            `Original request: ${input}`,
+            `Plan rationale: ${plan.rationale}`,
+            `Observations:`,
+            ...observations.map((o, n) => `${n + 1}. [${o.source}] ${JSON.stringify(o.data).slice(0, 500)}`),
+            `Write the final answer for the user: what was done, what was created, ids if any.`,
+          ].join('\n'),
+        },
+        { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
+      );
+      const result = finalResp.text;
+      push({ ts: iso(), kind: 'result', message: result.slice(0, 300), data: { model: finalResp.model_id } });
+
+      // 6) MEMORY UPDATE (episodic)
+      if (agent.memory_policy.write) {
+        await createMemory(this.db, {
+          user_id: opts.user_id, type: 'episodic',
+          content: `Agent ${agent.name} handled request "${input.slice(0, 160)}" → ${result.slice(0, 160)}`,
+          importance: 4, source: `agent:${agent.name}`, source_id: execId, project_id: opts.project_id ?? null,
+        }).catch(() => {});
+      }
+
+      // 7) tokens/cost rollup
+      const exec = await store.getExecution(this.db, execId);
+      await store.updateExecution(this.db, execId, {
+        tokens_in: (exec?.tokens_in ?? 0) + finalResp.input_tokens,
+        tokens_out: (exec?.tokens_out ?? 0) + finalResp.output_tokens,
+      });
+
+      await this.finish(execId, 'completed', result, null, agent);
+    } catch (e: any) {
+      await this.finish(execId, 'failed', null, String(e?.message ?? e), agent);
+    }
+  }
+
+  /** Execute one plan step (tool | model | skill) with full gating. */
+  private async executeStep(
+    step: PlanStep, opts: { agent: AgentRecord; input: string; user_id: string; autonomy_override?: number },
+    execId: string, ctx: ToolContext, trace: TraceEntry[], observations: Observation[], stepIndex: number,
+  ): Promise<StepOutcome> {
+    if (step.kind === 'model') {
+      const resp = await this.router.generate(
+        { capability: step.capability ?? 'reasoning', system: ctx.agent.system_instructions, prompt: step.prompt || opts.input, hint: observations.length ? observations.slice(-3) : undefined },
+        { agent_id: ctx.agent.id, execution_id: execId, preference: ctx.agent.model_policy.preference },
+      );
+      trace.push({ ts: iso(), kind: 'model', message: `Model ${resp.model_id}: ${resp.text.slice(0, 160)}`, data: { model: resp.model_id, tokens: resp.output_tokens } });
+      return { ok: true, result: { text: resp.text, model: resp.model_id } };
+    }
+
+    if (step.kind === 'skill') {
+      const skill = await store.getSkill(this.db, step.skill);
+      if (!skill) return { ok: false, error: `Skill not found: ${step.skill}` };
+      // skills run their own steps sequentially through the same machinery
+      const out: unknown[] = [];
+      for (const s of skill.steps) {
+        const r = await this.executeStep(s as PlanStep, opts, execId, ctx, trace, observations, stepIndex);
+        if (!r.ok) return r;
+        out.push(r.result);
+      }
+      await this.bus.emit('skill.executed', { execution_id: execId, skill: skill.name }, { actor_type: 'skill', target_type: 'execution', target_id: execId }).catch(() => {});
+      trace.push({ ts: iso(), kind: 'skill', message: `Skill ${skill.name} executed (${skill.steps.length} steps)` });
+      return { ok: true, result: { skill: skill.name, outputs: out } };
+    }
+
+    // tool step
+    const tool: ToolDef | undefined = this.tools.get(step.tool!);
+    if (!tool) return { ok: false, error: `Unknown tool: ${step.tool}` };
+    const args = (step.args ?? {}) as Record<string, unknown>;
+
+    // SECURITY GATE
+    const decision = evaluateGate(ctx.agent, tool, args, opts.autonomy_override);
+    if (!decision.allowed) {
+      await recordToolExecution(this.db, { execution_id: execId, agent_id: ctx.agent.id, tool: tool.name, args, result: null, risk: tool.risk, status: 'denied', error: decision.reason, latency_ms: 0 });
+      await this.bus.emit('tool.denied', { execution_id: execId, tool: tool.name, reason: decision.reason }, { actor_type: 'system', target_type: 'execution', target_id: execId });
+      await store.audit(this.db, { actor_type: 'system', action: 'tool.denied', target_type: 'tool', target_id: tool.name, execution_id: execId, meta: { reason: decision.reason } });
+      return { ok: true, result: { denied: true, reason: decision.reason, tool: tool.name } }; // denial is an observation, not a crash
+    }
+
+    // APPROVAL GATE
+    if (decision.needsApproval) {
+      const approved = await this.requestApproval(execId, ctx.agent, tool.name, args, decision.reason, opts.user_id);
+      if (approved !== 'approved') {
+        await recordToolExecution(this.db, { execution_id: execId, agent_id: ctx.agent.id, tool: tool.name, args, result: null, risk: tool.risk, status: 'denied', error: `approval ${approved}`, latency_ms: 0 });
+        return { ok: true, result: { denied: true, reason: `Human ${approved} the action`, tool: tool.name } };
+      }
+    }
+
+    // EXECUTE
+    const t0 = Date.now();
+    try {
+      const result = await tool.execute(args, ctx);
+      const latency = Date.now() - t0;
+      await recordToolExecution(this.db, { execution_id: execId, agent_id: ctx.agent.id, tool: tool.name, args, result, risk: tool.risk, status: 'ok', latency_ms: latency });
+      await this.bus.emit('tool.executed', { execution_id: execId, tool: tool.name, risk: tool.risk, latency_ms: latency, summary: summarizeOutcome(result) },
+        { actor_type: 'tool', target_type: 'execution', target_id: execId });
+      await store.audit(this.db, { actor_type: 'agent', actor_id: ctx.agent.id, action: `tool.${tool.name}`, target_type: 'tool', target_id: tool.name, execution_id: execId, meta: { args, risk: tool.risk } });
+      trace.push({ ts: iso(), kind: 'tool', message: `${tool.name} → ${summarizeOutcome(result)}`, data: { latency_ms: latency } });
+      return { ok: true, result };
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const latency = Date.now() - t0;
+      await recordToolExecution(this.db, { execution_id: execId, agent_id: ctx.agent.id, tool: tool.name, args, result: null, risk: tool.risk, status: 'error', error: msg, latency_ms: latency });
+      await this.bus.emit('tool.failed', { execution_id: execId, tool: tool.name, error: msg }, { actor_type: 'tool', target_type: 'execution', target_id: execId }).catch(() => {});
+      return { ok: false, error: `Tool ${tool.name} failed: ${msg}` };
+    }
+  }
+
+  /** Human-in-the-loop approval: suspends execution until decided or timeout. */
+  private async requestApproval(execId: string, agent: AgentRecord, tool: string, args: unknown, reason: string, userId: string): Promise<'approved' | 'denied' | 'timeout'> {
+    const approval = await store.createApproval(this.db, { execution_id: execId, agent_id: agent.id, tool, args, reason });
+    await store.updateExecution(this.db, execId, { status: 'approval_required' });
+    await store.setAgentStatus(this.db, agent.id, 'approval_required');
+    await this.bus.emit('approval.requested', { approval_id: approval.id, execution_id: execId, agent: agent.name, tool, reason },
+      { actor_type: 'agent', actor_id: agent.id, target_type: 'approval', target_id: approval.id });
+    const notification = await store.notify(this.db, {
+      user_id: userId, title: `Approval needed: ${tool}`,
+      message: `Agent ${agent.name} wants to run "${tool}". ${reason}`,
+      priority: 'high', category: 'approval', source: 'runtime',
+      related_type: 'approval', related_id: approval.id,
+    });
+    await this.bus.emit('notification.created', { id: notification.id, title: notification.title }, { actor_type: 'system', target_type: 'notification', target_id: notification.id });
+
+    return new Promise<'approved' | 'denied' | 'timeout'>((resolve) => {
+      const ctl = this.control.get(execId)!;
+      ctl.waiter = resolve;
+      const timer = setTimeout(() => {
+        if (ctl.waiter === resolve) { ctl.waiter = null; resolve('timeout'); }
+      }, config.approvalTimeoutS * 1000);
+      // cleanup on decision via resolveApproval()
+      const origResolve = resolve;
+      this.approvalWaiters.set(approval.id, { resolve: (v) => { clearTimeout(timer); origResolve(v); } });
+    });
+  }
+  private approvalWaiters = new Map<string, { resolve: (v: 'approved' | 'denied' | 'timeout') => void }>();
+
+  /** Called by the API when the human decides an approval. */
+  async resolveApproval(approvalId: string, decision: 'approve' | 'deny', userId: string): Promise<boolean> {
+    const rows = await this.db.query<any>('SELECT * FROM approvals WHERE id = ?', [approvalId]);
+    const appr = rows[0];
+    if (!appr || appr.status !== 'pending') return false;
+    await store.decideApproval(this.db, approvalId, decision, userId);
+    const waiter = this.approvalWaiters.get(approvalId);
+    this.approvalWaiters.delete(approvalId);
+    const execId = appr.execution_id;
+    await this.bus.emit('approval.decided', { approval_id: approvalId, decision, execution_id: execId },
+      { actor_type: 'user', actor_id: userId, target_type: 'approval', target_id: approvalId });
+    await store.audit(this.db, { actor_type: 'user', actor_id: userId, action: `approval.${decision}`, execution_id: execId, meta: { tool: appr.tool } });
+    if (waiter) waiter.resolve(decision === 'approve' ? 'approved' : 'denied');
+    // resume execution state
+    await store.updateExecution(this.db, execId, { status: 'running' });
+    const agentRow = await store.getAgent(this.db, appr.agent_id);
+    if (agentRow) await store.setAgentStatus(this.db, agentRow.id, 'executing');
+    return true;
+  }
+
+  // ─── controls ──────────────────────────────────────────────────────────────
+  async pause(execId: string): Promise<boolean> {
+    const ex = await store.getExecution(this.db, execId);
+    if (!ex || !['running', 'approval_required'].includes(ex.status)) return false;
+    this.control.get(execId)!.pause = true;
+    await store.updateExecution(this.db, execId, { status: 'paused' });
+    const agent = await store.getAgent(this.db, ex.agent_id);
+    if (agent) await store.setAgentStatus(this.db, agent.id, 'paused');
+    await this.bus.emit('agent.paused', { execution_id: execId }, { actor_type: 'user', target_type: 'execution', target_id: execId });
+    return true;
+  }
+  async resume(execId: string): Promise<boolean> {
+    const ex = await store.getExecution(this.db, execId);
+    if (!ex || ex.status !== 'paused') return false;
+    this.control.get(execId)!.pause = false;
+    await store.updateExecution(this.db, execId, { status: 'running' });
+    const agent = await store.getAgent(this.db, ex.agent_id);
+    if (agent) await store.setAgentStatus(this.db, agent.id, 'executing');
+    await this.bus.emit('agent.resumed', { execution_id: execId }, { actor_type: 'user', target_type: 'execution', target_id: execId });
+    return true;
+  }
+  async stop(execId: string): Promise<boolean> {
+    const ex = await store.getExecution(this.db, execId);
+    if (!ex || ['completed', 'failed', 'cancelled'].includes(ex.status)) return false;
+    const ctl = this.control.get(execId);
+    if (ctl) { ctl.stop = true; ctl.pause = false; ctl.waiter?.('denied'); }
+    return true;
+  }
+
+  private async finish(execId: string, status: ExecutionRecord['status'], result: string | null, error: string | null, agent: AgentRecord): Promise<void> {
+    this.control.delete(execId);
+    await store.updateExecution(this.db, execId, { status, result, error, completed_at: iso() });
+    const agentStatus = status === 'completed' ? 'idle' : status === 'failed' ? 'idle' : 'idle';
+    await store.setAgentStatus(this.db, agent.id, agentStatus);
+    const eventType = status === 'completed' ? 'agent.completed' : status === 'failed' ? 'agent.failed' : status === 'cancelled' ? 'agent.stopped' : 'agent.completed';
+    await this.bus.emit(eventType as any, { execution_id: execId, agent: agent.name, result: result?.slice(0, 400) ?? null, error },
+      { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
+    await store.audit(this.db, { actor_type: 'agent', actor_id: agent.id, action: `execution.${status}`, execution_id: execId, meta: {} });
+    // completion notification (skip for cancelled — quiet)
+    if (status === 'completed' || status === 'failed') {
+      const ex = await store.getExecution(this.db, execId);
+      if (ex) {
+        await store.notify(this.db, {
+          user_id: ex.user_id, title: `Agent ${agent.name} ${status}`,
+          message: (result ?? error ?? '').slice(0, 300),
+          priority: status === 'failed' ? 'high' : 'medium', category: 'agent', source: 'runtime',
+          related_type: 'execution', related_id: execId,
+        }).catch(() => {});
+      }
+    }
+  }
+}
+
+function summarizeOutcome(r: unknown): string {
+  try {
+    const s = typeof r === 'string' ? r : JSON.stringify(r);
+    return s.length > 140 ? s.slice(0, 140) + '…' : s;
+  } catch { return '(unserializable)'; }
+}
+
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+
+const PLANNER_SYSTEM = `You are the planning model inside the Agentic OS kernel. Given a request, context, memories, and a tool vocabulary, produce a MINIMAL plan.
+Respond ONLY with JSON: {"rationale": string, "steps": [{"kind":"tool","tool":name,"args":object} | {"kind":"model","capability":"reasoning|writing|chat","prompt":string,"input_from":"all|last"} | {"kind":"skill","skill":name,"args":object}]}
+Rules: prefer tools over reasoning steps for concrete actions; end with a model step that synthesizes the answer; never invent tool names outside the vocabulary; keep plans under 6 steps.`;

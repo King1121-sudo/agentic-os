@@ -1,0 +1,23 @@
+{
+  "name": "agentic-os",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "npm run build -w packages/contracts && npm run build -w apps/api",
+    "dev:api": "npm run build -w packages/contracts && npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "start:api": "npm run start -w apps/api",
+    "test": "npm run build -w packages/contracts && npm run test -w apps/api"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true
+  }
+}
