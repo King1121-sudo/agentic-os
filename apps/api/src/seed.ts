@@ -18,8 +18,9 @@ export async function seed(db: DataPort, bus: EventBus): Promise<{ created: bool
   let createdUser = false;
 
   // ── admin user ────────────────────────────────────────────────────────────
+  // NB: Postgres returns COUNT(*) as a string — always coerce to Number.
   const userCount = await db.query<any>('SELECT COUNT(*) AS n FROM users');
-  if ((userCount[0]?.n ?? 0) === 0) {
+  if (Number(userCount[0]?.n ?? 0) === 0) {
     const id = uuid();
     await db.run(
       'INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at) VALUES (?,?,?,?,?,?)',

@@ -110,7 +110,7 @@ export function buildApi(deps: ApiDeps) {
   app.get('/api/health', async () => {
     const dbUp = await db.health().catch(() => false);
     const providers = router.listProviders().map(p => ({ id: p.id, status: p.healthy ? 'up' : 'down', models: 0 }));
-    const count = async (t: string) => ((await db.query<any>(`SELECT COUNT(*) AS n FROM ${t}`))[0]?.n ?? 0);
+    const count = async (t: string) => Number((await db.query<any>(`SELECT COUNT(*) AS n FROM ${t}`))[0]?.n ?? 0);
     return {
       ok: dbUp, version: config.version, time: iso(),
       db: dbUp ? 'up' : 'down', broker: 'up',
@@ -543,10 +543,10 @@ export function buildApi(deps: ApiDeps) {
       bus.list(30),
     ]);
     const counts = {
-      executions: ((await db.query<any>('SELECT COUNT(*) AS n FROM executions'))[0]?.n ?? 0),
-      memories: ((await db.query<any>('SELECT COUNT(*) AS n FROM memories'))[0]?.n ?? 0),
-      generations: ((await db.query<any>('SELECT COUNT(*) AS n FROM generations'))[0]?.n ?? 0),
-      tool_runs: ((await db.query<any>('SELECT COUNT(*) AS n FROM tool_executions'))[0]?.n ?? 0),
+      executions: Number((await db.query<any>('SELECT COUNT(*) AS n FROM executions'))[0]?.n ?? 0),
+      memories: Number((await db.query<any>('SELECT COUNT(*) AS n FROM memories'))[0]?.n ?? 0),
+      generations: Number((await db.query<any>('SELECT COUNT(*) AS n FROM generations'))[0]?.n ?? 0),
+      tool_runs: Number((await db.query<any>('SELECT COUNT(*) AS n FROM tool_executions'))[0]?.n ?? 0),
     };
     return { agents, tasks, projects, notes, events, counts };
   });

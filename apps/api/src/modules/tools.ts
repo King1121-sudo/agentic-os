@@ -234,7 +234,7 @@ export function createBuiltinTools(db: DataPort): ToolDef[] {
 }
 
 async function healthCounts(db: DataPort) {
-  const one = async (sql: string) => ((await db.query<any>(sql))[0]?.n ?? 0);
+  const one = async (sql: string) => Number((await db.query<any>(sql))[0]?.n ?? 0);
   return {
     agents: await one('SELECT COUNT(*) AS n FROM agents'),
     executions: await one('SELECT COUNT(*) AS n FROM executions'),
