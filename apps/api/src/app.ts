@@ -14,6 +14,7 @@ import type { AgentRuntime } from './modules/runtime';
 import type { ToolRegistry } from './modules/tools';
 import * as store from './modules/store';
 import * as memory from './modules/memory';
+import { loadSkillsFromDir, upsertSkillVersioned, skillMetrics, skillVersions } from './modules/skills';
 import { config } from './config';
 import { hashPassword, verifyPassword } from './auth.util';
 import {
@@ -174,7 +175,8 @@ export function buildApi(deps: ApiDeps) {
       agent, input: parsed.data.input, user_id: req.user.id,
       project_id: parsed.data.project_id ?? null, task_id: parsed.data.task_id ?? null,
       autonomy_override: parsed.data.autonomy_override,
-    });
+      skill: parsed.data.skill,
+    } as any);
     return { execution_id: exec.id, status: exec.status, agent_id: agent.id, agent_name: agent.name };
   });
 
@@ -218,24 +220,22 @@ export function buildApi(deps: ApiDeps) {
   })));
 
   app.get('/api/skills', async () => store.listSkills(db));
+  app.get('/api/skills/metrics', async () => skillMetrics(db));
+  app.get('/api/skills/versions', async (req: any) => skillVersions(db, req.query?.skill_id));
+  app.post('/api/skills/reload', async () => {
+    const res = await loadSkillsFromDir(db, config.skillsDir, bus);
+    return { ...res, dir: config.skillsDir };
+  });
   app.post('/api/skills', async (req: any, reply: any) => {
     const parsed = SkillCreateInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input', details: parsed.error.flatten() });
     const d = parsed.data;
-    const now = iso();
-    const rec = {
-      id: uuid(), name: d.name, description: d.description, category: d.category,
-      parent_id: d.parent_id ?? null, version: '0.1.0', instructions: d.instructions,
-      steps: d.steps, required_tools: d.required_tools ?? [], required_permissions: [],
-      created_at: now, updated_at: now,
-    };
-    await db.run(
-      `INSERT INTO skills (id, name, description, category, parent_id, version, instructions, steps, required_tools, required_permissions, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [rec.id, rec.name, rec.description, rec.category, rec.parent_id, rec.version, rec.instructions,
-       JSON.stringify(rec.steps), JSON.stringify(rec.required_tools), JSON.stringify(rec.required_permissions), now, now],
-    );
-    return rec;
+    const { skill, version_bumped } = await upsertSkillVersioned(db, {
+      name: d.name, description: d.description, category: d.category,
+      parent: null, instructions: d.instructions,
+      steps: d.steps, required_tools: d.required_tools,
+    }, bus);
+    return { ...skill, version_bumped };
   });
   app.post('/api/skills/:id/execute', async (req: any, reply: any) => {
     // skills execute within an agent execution — the runtime handles skill steps.
@@ -550,6 +550,19 @@ export function buildApi(deps: ApiDeps) {
     const specialist = await detectSpecialist(t);
     const agent = specialist ?? (await store.getAgentByName(db, 'Hermes')) ?? (await store.listAgents(db))[0];
     if (!agent) return { kind: 'result', text: 'No agents registered. Run: npm run seed' };
+    // Phase 4: "run/use the <skill> skill [on <url>]" → direct skill execution
+    const skillMatch = text.match(/\b(?:run|use|execute)\s+(?:the\s+)?["“']?([A-Za-z][A-Za-z&' -]{2,40}?)["”']?\s+skill\b/i);
+    if (skillMatch) {
+      const skillName = skillMatch[1].trim();
+      const skill = await store.getSkill(db, skillName);
+      if (skill) {
+        const target = /https?:\/\/\S+/i.exec(text)?.[0];
+        const input = target ? `Run skill ${skill.name} on ${target}` : `Run skill ${skill.name}`;
+        const exec = await runtime.run({ agent, input, user_id: user.id, skill: skill.name } as any);
+        return { kind: 'execution', execution_id: exec.id, agent_id: agent.id, agent_name: agent.name };
+      }
+      // unknown skill falls through to normal planning (the planner will report it)
+    }
     const exec = await runtime.run({ agent, input: text, user_id: user.id });
     return { kind: 'execution', execution_id: exec.id, agent_id: agent.id, agent_name: agent.name };
   }

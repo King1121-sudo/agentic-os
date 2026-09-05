@@ -14,6 +14,7 @@ import type { ToolRegistry, ToolDef } from './tools';
 import { recordToolExecution } from './tools';
 import { evaluateGate, type ToolContext } from '../kernel/types';
 import * as store from './store';
+import { resolveSkillChain, requiredToolsFor, recordSkillExecution } from './skills';
 import { searchMemory, createMemory } from './memory';
 import { config } from '../config';
 import type {
@@ -49,7 +50,7 @@ export class AgentRuntime {
   async run(opts: {
     agent: AgentRecord; input: string; user_id: string;
     project_id?: string | null; task_id?: string | null; autonomy_override?: number;
-    extras?: RunExtras;
+    extras?: RunExtras; skill?: string;
   }): Promise<ExecutionRecord> {
     const { agent, input } = opts;
     const extras = opts.extras ?? { depth: 0 };
@@ -86,7 +87,7 @@ export class AgentRuntime {
 
   private async drive(opts: {
     agent: AgentRecord; input: string; user_id: string; project_id?: string | null; task_id?: string | null;
-    autonomy_override?: number; extras?: RunExtras;
+    autonomy_override?: number; extras?: RunExtras; skill?: string;
   }, execId: string): Promise<void> {
     const { agent, input } = opts;
     const extras = opts.extras ?? { depth: 0 };
@@ -127,9 +128,20 @@ export class AgentRuntime {
         push({ ts: iso(), kind: 'memory', message: `Retrieved ${memories.length} memories`, data: memories.map(m => m.id) });
       }
 
-      // 3) PLANNER — resumed executions reuse the persisted plan (checkpoint)
+      // 3) PLANNER — resumed executions reuse the persisted plan (checkpoint);
+      //    a direct skill request skips planning entirely (skill step + synthesis)
       let plan: Plan;
-      if (extras.skipPlanning) {
+      if ((opts as any).skill) {
+        plan = {
+          rationale: `Direct execution of skill "${(opts as any).skill}"`,
+          steps: [
+            { kind: 'skill', skill: (opts as any).skill, args: {} },
+            { kind: 'model', capability: 'reasoning', prompt: 'Synthesize the skill results for the user.', input_from: 'all' },
+          ],
+        };
+        await store.updateExecution(this.db, execId, { plan: JSON.stringify(plan) });
+        push({ ts: iso(), kind: 'plan', message: plan.rationale, data: { steps: plan.steps.length } });
+      } else if (extras.skipPlanning) {
         const existing = await store.getExecution(this.db, execId);
         plan = (existing?.plan as Plan) ?? {
           rationale: 'Resumed without a persisted plan; falling back to reasoning',
@@ -309,22 +321,67 @@ export class AgentRuntime {
     if (step.kind === 'skill') {
       const skill = await store.getSkill(this.db, step.skill);
       if (!skill) return { ok: false, error: `Skill not found: ${step.skill}` };
-      // skills run their own steps sequentially through the same machinery
+
+      // Phase 4: permission precheck across the whole inheritance chain — the
+      // agent must hold every tool any step (inherited or own) requires.
+      const all = await store.listSkills(this.db);
+      const byName = new Map(all.map(s => [s.name, s]));
+      const chain = resolveSkillChain(byName, skill);
+      const needed = requiredToolsFor(byName, skill);
+      const missing = needed.filter(t => !ctx.agent.tools.includes(t));
+      const t0 = Date.now();
+      if (missing.length > 0) {
+        await recordSkillExecution(this.db, {
+          skill_id: skill.id, skill_version: skill.version, execution_id: execId,
+          agent_id: ctx.agent.id, status: 'denied', latency_ms: Date.now() - t0,
+          error: `Agent lacks tools: ${missing.join(', ')}`,
+        });
+        await this.bus.emit('skill.denied', { execution_id: execId, skill: skill.name, missing },
+          { actor_type: 'system', target_type: 'skill', target_id: skill.id }).catch(() => {});
+        return { ok: true, result: { denied: true, reason: `Agent lacks tools for skill chain: ${missing.join(', ')}`, skill: skill.name } };
+      }
+
+      // run the RESOLVED chain (parent steps first), each through the same machinery
       const out: unknown[] = [];
-      for (const s of skill.steps) {
+      for (const s of chain.steps) {
         const r = await this.executeStep(s as PlanStep, opts, execId, ctx, trace, observations, stepIndex);
-        if (!r.ok) return r;
+        if (!r.ok) {
+          await recordSkillExecution(this.db, {
+            skill_id: skill.id, skill_version: skill.version, execution_id: execId,
+            agent_id: ctx.agent.id, status: 'failed', latency_ms: Date.now() - t0, error: r.error,
+          });
+          return r;
+        }
         out.push(r.result);
       }
-      await this.bus.emit('skill.executed', { execution_id: execId, skill: skill.name }, { actor_type: 'skill', target_type: 'execution', target_id: execId }).catch(() => {});
-      trace.push({ ts: iso(), kind: 'skill', message: `Skill ${skill.name} executed (${skill.steps.length} steps)` });
-      return { ok: true, result: { skill: skill.name, outputs: out } };
+      await recordSkillExecution(this.db, {
+        skill_id: skill.id, skill_version: skill.version, execution_id: execId,
+        agent_id: ctx.agent.id, status: 'completed', latency_ms: Date.now() - t0,
+      });
+      await this.bus.emit('skill.executed', { execution_id: execId, skill: skill.name, chain: chain.chain, steps: chain.steps.length, version: skill.version },
+        { actor_type: 'skill', target_type: 'skill', target_id: skill.id }).catch(() => {});
+      trace.push({ ts: iso(), kind: 'skill', message: `Skill ${skill.name} v${skill.version} executed (${chain.steps.length} steps, chain: ${chain.chain.join(' → ')})` });
+      return { ok: true, result: { skill: skill.name, version: skill.version, chain: chain.chain, outputs: out } };
     }
 
     // tool step
     const tool: ToolDef | undefined = this.tools.get(step.tool!);
     if (!tool) return { ok: false, error: `Unknown tool: ${step.tool}` };
-    const args = (step.args ?? {}) as Record<string, unknown>;
+    // Phase 4: args_from — pull arg values from the execution's raw input
+    let args = (step.args ?? {}) as Record<string, unknown>;
+    if ((step as any).args_from) {
+      const src = (step as any).args_from as 'input' | 'url' | 'query';
+      const input = opts.input;
+      if (src === 'url') {
+        const url = /https?:\/\/\S+/i.exec(input)?.[0];
+        if (url) args = { ...args, url };
+      } else if (src === 'input') {
+        args = { ...args, content: input, query: input, task: input, expression: input, title: input, message: input };
+      } else if (src === 'query') {
+        const q = input.replace(/^.*?(?:on|about|for|query)\s+/i, '').trim() || input;
+        args = { ...args, query: q, content: q };
+      }
+    }
 
     // SECURITY GATE
     const decision = evaluateGate(ctx.agent, tool, args, opts.autonomy_override);

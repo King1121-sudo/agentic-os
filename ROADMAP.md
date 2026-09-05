@@ -50,12 +50,18 @@ the HTTP shell later is mechanical if needed.
 - [x] Execution-graph UI: trace viewer shows delegated child executions (clickable); interrupted executions get a purple badge + "Resume from checkpoint"
 - [x] 7 new tests (32 total): delegation graph + child wait, depth guard rejection, mailbox injection + consumption, retry trace evidence, recoverInterrupted, checkpoint resume
 
-## Phase 4 — Skills (next)
-- skill inheritance + versioning (parent_id, version columns ready)
-- permission-aware execution history + performance metrics
-- SDK: skills defined as JSON/YAML files, hot-loadable
+## Phase 4 — Skills ✅ (v0.4.0)
 
-## Phase 5 — Memory
+- [x] Inheritance: skills declare `parent` (by name) in files or via the API; execution resolves the chain (parent steps first, own last) with a cycle guard; trace shows `Skill X vN executed (k steps, chain: X → Parent)`
+- [x] Versioning: every changed definition snapshots the prior version into `skill_versions` and bumps patch semver; diff-aware loader — unchanged files are no-ops (verified: reload reports bumped=0); two-pass load so parent resolution never depends on file order
+- [x] Hot-load SDK: skill definitions live in `skills/` as JSON or YAML (tiny built-in YAML subset parser, zero deps); boot auto-loads, `POST /api/skills/reload` re-scans; per-file errors reported without failing the batch
+- [x] Permission-aware execution: chain-wide tool precheck before running any step (agent must hold every tool the chain needs); denials recorded in `skill_executions` + `skill.denied` event + UI
+- [x] Performance metrics: `skill_executions` history (status, latency, version) → `GET /api/skills/metrics` (runs, ✓/✗/⊘, success %, avg latency); Skills panel renders tree + metrics + version history
+- [x] Direct skill execution: `POST /api/agents/:id/execute {skill}` and command-center phrasing ("run the X skill on <url>") build a skill-first plan without the LLM planner
+- [x] `args_from` templating: skill steps can pull `url`/`query`/`input` from the execution input (verified: inherited http.fetch step fetched the real URL)
+- [x] 9 new tests (41 total): chain order + cycle guard + tool union, version bump/dedup + snapshot, YAML parsing + name validation, two-pass diff-aware loading, per-file errors, metrics aggregation
+
+## Phase 5 — Memory (next)
 - pgvector driver for true semantic retrieval (port unchanged)
 - entity extraction from memories, entity↔memory links
 - working-memory context windows per execution (schema ready)

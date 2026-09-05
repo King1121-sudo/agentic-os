@@ -1,0 +1,11 @@
+{
+  "name": "Daily Briefing",
+  "description": "Compile open tasks and system info into a terse briefing.",
+  "category": "productivity",
+  "instructions": "Keep the briefing under ten lines. Lead with blockers, then tasks, then counts.",
+  "steps": [
+    { "kind": "tool", "tool": "task.list", "args": { "status": "todo" } },
+    { "kind": "tool", "tool": "sys.info", "args": {} },
+    { "kind": "model", "capability": "writing", "prompt": "Compose a terse daily briefing from the task list and system info." }
+  ]
+}

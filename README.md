@@ -58,7 +58,7 @@ The Model Router health-probes providers at boot + every 60s, picks models by ca
 | Crash recovery + checkpoint resume (interrupted → resumable, at-least-once) | ✅ live | `runtime.recoverInterrupted/resumeExecution` |
 | Memory Engine (7 types, composite scoring, dedup, decay, consolidation) | ✅ live | `modules/memory.ts` |
 | Tool Runtime (12 tools, risk classes, permission scopes, sandboxed files) | ✅ live | `modules/tools.ts` |
-| Skills (registry, composable steps, skill tree UI) | ✅ live | store + UI |
+| Skills (inheritance chains, versioning, hot-loadable JSON/YAML, permission precheck, metrics) | ✅ live | `modules/skills.ts` + `skills/` |
 | Tasks / Projects / Sprints | ✅ live | store + UI |
 | Links / entity graph + explorer | ✅ live | `links` panel |
 | Generations ledger (tokens, latency, cost, parent chains) | ✅ live | gateway + UI |

@@ -1,0 +1,10 @@
+{
+  "name": "Web Artifact",
+  "description": "Draft and persist a generated artifact into the OS sandbox.",
+  "category": "development",
+  "instructions": "Artifacts are written under the sandbox root; paths are jailed.",
+  "steps": [
+    { "kind": "model", "capability": "writing", "prompt": "Draft the artifact content." },
+    { "kind": "tool", "tool": "file.write", "args": {} }
+  ]
+}

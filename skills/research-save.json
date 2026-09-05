@@ -1,0 +1,10 @@
+{
+  "name": "Research & Save",
+  "description": "Fetch a URL and summarize it into key points.",
+  "category": "research",
+  "instructions": "Summaries must be grounded in the fetched content only.",
+  "steps": [
+    { "kind": "tool", "tool": "http.fetch", "args": {}, "args_from": "url" },
+    { "kind": "model", "capability": "reasoning", "prompt": "Summarize the fetched content in five key points." }
+  ]
+}

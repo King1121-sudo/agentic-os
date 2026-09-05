@@ -9,6 +9,7 @@ import { iso, uuid } from './infra/types';
 import type { EventBus } from './kernel/bus';
 import * as store from './modules/store';
 import { createMemory } from './modules/memory';
+import { loadSkillsFromDir } from './modules/skills';
 import { config } from './config';
 import { hashPassword } from './auth.util';
 
@@ -98,48 +99,10 @@ export async function seed(db: DataPort, bus: EventBus): Promise<{ created: bool
     agentsCreated++;
   }
 
-  // ── skills (starter skill tree: general → …) ──────────────────────────────
-  const skillDefs = [
-    {
-      name: 'Daily Briefing', category: 'productivity', description: 'Compile open tasks, agent status, notifications into a briefing.',
-      steps: [
-        { kind: 'tool', tool: 'task.list', args: { status: 'todo' } },
-        { kind: 'tool', tool: 'sys.info', args: {} },
-        { kind: 'model', capability: 'writing', prompt: 'Compose a terse daily briefing from the task list and system info.', input_from: 'all' },
-      ] as any[],
-      required_tools: ['task.list', 'sys.info'],
-    },
-    {
-      name: 'Research & Save', category: 'research', description: 'Fetch a URL, summarize, save the summary to memory and file.',
-      steps: [
-        { kind: 'tool', tool: 'http.fetch', args: {} },
-        { kind: 'model', capability: 'reasoning', prompt: 'Summarize the fetched content in five key points.', input_from: 'last' },
-        { kind: 'tool', tool: 'memory.write', args: {} },
-      ] as any[],
-      required_tools: ['http.fetch', 'memory.write'],
-    },
-    {
-      name: 'Web Artifact', category: 'development', description: 'Write a generated HTML/MD artifact into the sandbox.',
-      steps: [
-        { kind: 'model', capability: 'writing', prompt: 'Draft the artifact content.', input_from: 'all' },
-        { kind: 'tool', tool: 'file.write', args: {} },
-      ] as any[],
-      required_tools: ['file.write'],
-    },
-  ];
-
-  let skillsCreated = 0;
-  for (const s of skillDefs) {
-    const existing = await db.query<any>('SELECT id FROM skills WHERE name = ?', [s.name]);
-    if (existing.length) continue;
-    await db.run(
-      `INSERT INTO skills (id, name, description, category, parent_id, version, instructions, steps, required_tools, required_permissions, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [uuid(), s.name, s.description, s.category, null, '0.1.0', '', JSON.stringify(s.steps),
-       JSON.stringify(s.required_tools), JSON.stringify([]), now(), now()],
-    );
-    skillsCreated++;
-  }
+  // ── skills — hot-loaded from the skills/ dir (Phase 4 dogfooding) ─────────
+  const load = await loadSkillsFromDir(db, config.skillsDir, bus);
+  const skillsCreated = load.loaded;
+  if (load.errors.length) console.warn('[seed] skill load errors:', load.errors.join('; '));
 
   // ── example project + welcome memory (first boot only) ────────────────────
   if (createdUser) {
@@ -161,7 +124,7 @@ export async function seed(db: DataPort, bus: EventBus): Promise<{ created: bool
       content: 'Agentic OS kernel v0.1: Fastify API, adapter-based data layer (SQLite/Postgres), event bus, agent runtime with approvals, model gateway with fallback, memory engine with consolidation, tools gated by risk/autonomy.',
       importance: 8, source: 'seed',
     });
-    if (bus) await bus.emit('system.ready', { seeded: true, agents: agentDefs.length, skills: skillDefs.length }, { actor_type: 'system' });
+    if (bus) await bus.emit('system.ready', { seeded: true, agents: agentDefs.length, skills: load.loaded }, { actor_type: 'system' });
   }
 
   return { created: createdUser, agents: agentsCreated, skills: skillsCreated };

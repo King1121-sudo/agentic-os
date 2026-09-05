@@ -37,5 +37,7 @@ export const config = {
   maxDelegationDepth: num(process.env.AGENTIC_MAX_DELEGATION_DEPTH, 2),
   seedAdmin: { username: str(process.env.SEED_ADMIN_USER, 'admin'), password: str(process.env.SEED_ADMIN_PASSWORD, 'admin123') },
   allowShell: str(process.env.AGENTIC_ALLOW_SHELL, '0') === '1',
+  /** Phase 4: hot-loadable skill definitions (JSON/YAML). */
+  skillsDir: process.env.AGENTIC_SKILLS_DIR ?? path.resolve(dataDir, '..', 'skills'),
   version: '0.3.0',
 };

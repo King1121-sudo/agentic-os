@@ -53,7 +53,8 @@ export type EventType =
   | 'notification.created' | 'link.created' | 'integration.event'
   | 'user.login' | 'user.logout' | 'system.ready'
   | 'agent.token' | 'generation.cancelled'
-  | 'agent.delegated' | 'agent.messaged' | 'execution.resumed' | 'execution.interrupted';
+  | 'agent.delegated' | 'agent.messaged' | 'execution.resumed' | 'execution.interrupted'
+  | 'skill.denied' | 'skill.version.bumped';
 
 export interface OsEvent {
   id: Uuid;
@@ -277,6 +278,9 @@ export const PlanStepSchema = z.union([
     kind: z.literal('tool'),
     tool: z.string(),
     args: z.record(z.unknown()).default({}),
+    /** Phase 4: template refs inside args resolved from the execution input.
+     *  e.g. { "$input": true } → the raw user input; { "$url": true } → first URL in it. */
+    args_from: z.enum(['input', 'url', 'query']).optional(),
   }),
   z.object({
     kind: z.literal('model'),

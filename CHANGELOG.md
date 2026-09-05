@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — Skills (Phase 4, 2026-09-05)
+
+### Added
+- **Skill inheritance**: `parent` field (name reference) resolves to an execution chain — parent steps run first, own steps last, cycle-guarded. Live-verified: `Research & Save Extended` → chain `Extended → Research & Save` executed as 3 steps.
+- **Versioning**: any changed skill definition snapshots the superseded version into `skill_versions` (migration 003) and bumps patch semver (`0.1.0 → 0.1.1`). Version History panel lists superseded definitions. Diff-aware: reloading unchanged files bumps nothing.
+- **Hot-load SDK**: skills are JSON/YAML files in `skills/` (4 shipped: daily-briefing, research-save + args_from, research-save-extended YAML demonstrating inheritance, web-artifact). Boot auto-loads; `POST /api/skills/reload` re-scans; two-pass load makes parent resolution independent of file order; per-file errors don't fail the batch. Tiny zero-dep YAML subset parser.
+- **Permission-aware execution**: before any step runs, the agent's toolset is checked against every tool in the resolved chain; missing tools → skill.denied, recorded in history + metrics. Live-verified: Monitor denied `http.fetch, memory.write` for the Extended chain; metrics show ⊘.
+- **Performance metrics**: `skill_executions` records every run (status/version/latency); `GET /api/skills/metrics` aggregates runs, ✓/✗/⊘, success %, avg latency; Skills panel shows per-skill stats inline.
+- **Direct skill execution**: `POST /api/agents/:id/execute {skill: name}` and command-center phrasing ("run the Research & Save Extended skill on https://…") bypass the planner with a skill-first plan.
+- **`args_from` step templating**: `{args_from: "url"|"query"|"input"}` pulls values from the execution input — the inherited http.fetch step now fetches the real URL from the command (live-verified, status 200).
+
+### Fixed
+- YAML step parsing lost continuation keys (only the first key of each step survived) — parser now handles indented sub-keys.
+- Loader order dependence: single-pass load left `parent_id` null when a child file was read before its parent; two-pass load resolves deterministically.
+
 ## 0.3.0 — Agent runtime maturation (Phase 3, 2026-09-05)
 
 ### Added

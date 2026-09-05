@@ -1,0 +1,11 @@
+# Inherits every step from "Research & Save" (http.fetch → summarize)
+# and adds a durable memory write. Demonstrates skill inheritance.
+name: Research & Save Extended
+description: Fetch a URL, summarize it, and remember the summary.
+category: research
+parent: Research & Save
+instructions: Ground the summary in fetched content, then persist it.
+steps:
+  - kind: tool
+    tool: memory.write
+    args: {}
