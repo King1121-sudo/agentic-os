@@ -33,10 +33,10 @@ export async function seed(db: DataPort, bus: EventBus): Promise<{ created: bool
   const agentDefs = [
     {
       name: 'Hermes',
-      description: 'Generalist supervisor. Routes requests, plans, coordinates other agents.',
-      system_instructions: 'You are Hermes, the supervisor agent of the Agentic OS. Plan efficiently, use tools for concrete actions, and summarize results clearly for the user.',
+      description: 'Generalist supervisor. Routes requests, plans, coordinates and DELEGATES to specialists.',
+      system_instructions: 'You are Hermes, the supervisor agent of the Agentic OS. Plan efficiently, use tools for concrete actions, delegate specialist work with agent.delegate, and summarize results clearly for the user.',
       autonomy: 2,
-      tools: ['memory.search', 'memory.write', 'task.create', 'task.update', 'task.list', 'project.create', 'notify', 'sys.info', 'calc.eval', 'http.fetch'],
+      tools: ['memory.search', 'memory.write', 'task.create', 'task.update', 'task.list', 'project.create', 'notify', 'sys.info', 'calc.eval', 'http.fetch', 'agent.delegate', 'agent.message'],
     },
     {
       name: 'Planner',
@@ -64,13 +64,27 @@ export async function seed(db: DataPort, bus: EventBus): Promise<{ created: bool
       description: 'Watches system health and project status; escalates anomalies.',
       system_instructions: 'You are the Monitor agent. Check system state with sys.info, report anomalies via notify. Be terse.',
       autonomy: 3,
-      tools: ['sys.info', 'memory.search', 'notify', 'task.list'],
+      tools: ['sys.info', 'memory.search', 'notify', 'task.list', 'agent.message'],
     },
   ];
 
   let agentsCreated = 0;
   for (const def of agentDefs) {
-    if (await store.getAgentByName(db, def.name)) continue;
+    const existing = await store.getAgentByName(db, def.name);
+    if (existing) {
+      // Upgrade path: refresh a built-in agent to the current seed definition
+      // when the user hasn't customized it (its toolset is a subset of the new
+      // definition → nothing custom was added). Preserves autonomy/status edits.
+      const uncustomized = existing.tools.every((t: string) => def.tools.includes(t));
+      if (uncustomized && (existing.tools.length !== def.tools.length || existing.description !== def.description)) {
+        await store.upsertAgent(db, {
+          ...existing, description: def.description, system_instructions: def.system_instructions,
+          tools: def.tools, permissions: { tools: def.tools, scopes: scopesFor(def.tools) },
+          updated_at: now(),
+        });
+      }
+      continue;
+    }
     await store.upsertAgent(db, {
       id: uuid(), name: def.name, description: def.description,
       system_instructions: def.system_instructions,
@@ -160,6 +174,7 @@ function scopesFor(toolNames: string[]): string[] {
     'project.create': 'projects:write', 'http.fetch': 'net:fetch',
     'file.write': 'files:write', 'file.read': 'files:read', 'shell.run': 'shell:exec',
     'notify': 'notify:send', 'calc.eval': 'calc', 'sys.info': 'system:read',
+    'agent.delegate': 'agents:delegate', 'agent.message': 'agents:message',
   };
   return [...new Set(['memory:read', 'memory:write', ...toolNames.map(t => map[t]).filter(Boolean)])];
 }

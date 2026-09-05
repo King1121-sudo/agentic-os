@@ -22,6 +22,16 @@ import type {
 
 type StepOutcome = { ok: true; result: unknown } | { ok: false; error: string };
 
+/** Extra runtime context threaded through executions (Phase 3). */
+export interface RunExtras {
+  depth: number;               // delegation nesting depth (0 = top-level)
+  parentExecId?: string;       // set for delegated child executions
+  resumedFrom?: number;       // checkpoint: step index to resume from (inclusive)
+  resumedObservations?: Observation[];
+  resumedTrace?: TraceEntry[];
+  skipPlanning?: boolean;      // resume: reuse the persisted plan
+}
+
 export class AgentRuntime {
   private control = new Map<string, { pause: boolean; stop: boolean; waiter: ((v: 'approved' | 'denied' | 'timeout') => void) | null }>();
   /** Phase 2: abort controllers for in-flight generations, per execution. */
@@ -39,21 +49,33 @@ export class AgentRuntime {
   async run(opts: {
     agent: AgentRecord; input: string; user_id: string;
     project_id?: string | null; task_id?: string | null; autonomy_override?: number;
+    extras?: RunExtras;
   }): Promise<ExecutionRecord> {
     const { agent, input } = opts;
+    const extras = opts.extras ?? { depth: 0 };
     const execId = uuid();
     const startedAt = iso();
 
     await store.insertExecution(this.db, {
       id: execId, agent_id: agent.id, user_id: opts.user_id, input, project_id: opts.project_id ?? null,
       task_id: opts.task_id ?? null, status: 'running', observations: [], trace: [],
-      started_at: startedAt,
+      started_at: startedAt, parent_execution_id: extras.parentExecId ?? null,
     });
+    // delegation graph: parent → child link
+    if (extras.parentExecId) {
+      await store.createLink(this.db, {
+        from_type: 'execution', from_id: extras.parentExecId,
+        to_type: 'execution', to_id: execId, relation: 'delegated_to',
+      }).catch(() => {});
+    }
     await store.setAgentStatus(this.db, agent.id, 'thinking');
     this.control.set(execId, { pause: false, stop: false, waiter: null });
-    await this.bus.emit('agent.started', { execution_id: execId, agent: agent.name, input: input.slice(0, 200) },
+    await this.bus.emit('agent.started', {
+      execution_id: execId, agent: agent.name, input: input.slice(0, 200),
+      delegated_by: extras.parentExecId ?? undefined, depth: extras.depth,
+    },
       { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
-    await store.audit(this.db, { actor_type: 'agent', actor_id: agent.id, action: 'execution.start', execution_id: execId, meta: { input: input.slice(0, 300) } });
+    await store.audit(this.db, { actor_type: 'agent', actor_id: agent.id, action: 'execution.start', execution_id: execId, meta: { input: input.slice(0, 300), depth: extras.depth } });
 
     // fire-and-forget; state machine drives itself to a terminal state
     this.drive(opts, execId).catch(async (e) => {
@@ -62,10 +84,14 @@ export class AgentRuntime {
     return (await store.getExecution(this.db, execId))!;
   }
 
-  private async drive(opts: { agent: AgentRecord; input: string; user_id: string; project_id?: string | null; task_id?: string | null; autonomy_override?: number }, execId: string): Promise<void> {
+  private async drive(opts: {
+    agent: AgentRecord; input: string; user_id: string; project_id?: string | null; task_id?: string | null;
+    autonomy_override?: number; extras?: RunExtras;
+  }, execId: string): Promise<void> {
     const { agent, input } = opts;
-    const trace: TraceEntry[] = [];
-    const observations: Observation[] = [];
+    const extras = opts.extras ?? { depth: 0 };
+    const trace: TraceEntry[] = extras.resumedTrace ? [...extras.resumedTrace] : [];
+    const observations: Observation[] = extras.resumedObservations ? [...extras.resumedObservations] : [];
     const push = (entry: TraceEntry) => { trace.push(entry); };
     const persist = () => store.updateExecution(this.db, execId, { trace: JSON.stringify(trace), observations: JSON.stringify(observations) });
 
@@ -82,6 +108,12 @@ export class AgentRuntime {
       // 1) CONTEXT RESOLVER — resolve project + task context
       let project: any = null;
       if (opts.project_id) project = await store.getProject(this.db, opts.project_id);
+
+      // 1b) AGENT MAILBOX (Phase 3) — pending peer messages inject into context
+      const mailbox = await store.pendingMessagesFor(this.db, agent.id, true).catch(() => []);
+      if (mailbox.length) {
+        push({ ts: iso(), kind: 'state', message: `Received ${mailbox.length} agent message(s)`, data: { from: mailbox.map(m => m.from_agent_id) } });
+      }
       push({ ts: iso(), kind: 'state', message: `Context resolved${project ? ` (project: ${project.name})` : ''}` });
 
       // 2) MEMORY RETRIEVAL
@@ -95,38 +127,52 @@ export class AgentRuntime {
         push({ ts: iso(), kind: 'memory', message: `Retrieved ${memories.length} memories`, data: memories.map(m => m.id) });
       }
 
-      // 3) PLANNER
-      await store.setAgentStatus(this.db, agent.id, 'planning');
-      await this.bus.emit('agent.thinking', { execution_id: execId, agent: agent.name, phase: 'planning' },
-        { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
-      const planPrompt = [
-        agent.system_instructions || 'You are an agent in the Agentic OS. Create a short plan.',
-        `User request: ${input}`,
-        project ? `Project context: ${project.name} — ${project.description}` : '',
-        memories.length ? `Relevant memories:\n${memories.map(m => `- (${m.type}) ${m.summary}`).join('\n')}` : '',
-        `Produce a plan with the available tools: ${agent.tools.join(', ')}.`,
-      ].filter(Boolean).join('\n\n');
-      const planResp = await this.router.generate(
-        { capability: 'planning', system: PLANNER_SYSTEM, prompt: planPrompt, hint: { user_input: input, tools: agent.tools, memories: memories.map(m => m.id) } },
-        { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
-      );
-      const plan: Plan = planResp.plan ?? {
-        rationale: 'Fallback plan (planner returned no structured plan)',
-        steps: [{ kind: 'model', capability: 'reasoning', prompt: 'Answer the request directly.', input_from: 'all' }],
-      };
-      await store.updateExecution(this.db, execId, { plan: JSON.stringify(plan), tokens_in: planResp.input_tokens, tokens_out: planResp.output_tokens });
-      await this.bus.emit('plan.created', { execution_id: execId, agent: agent.name, rationale: plan.rationale, steps: plan.steps.length },
-        { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
-      await emitTrace({ ts: iso(), kind: 'plan', message: plan.rationale, data: { steps: plan.steps.length, model: planResp.model_id } });
+      // 3) PLANNER — resumed executions reuse the persisted plan (checkpoint)
+      let plan: Plan;
+      if (extras.skipPlanning) {
+        const existing = await store.getExecution(this.db, execId);
+        plan = (existing?.plan as Plan) ?? {
+          rationale: 'Resumed without a persisted plan; falling back to reasoning',
+          steps: [{ kind: 'model', capability: 'reasoning', prompt: 'Answer directly.', input_from: 'all' }],
+        };
+        push({ ts: iso(), kind: 'state', message: `Resumed from checkpoint at step ${extras.resumedFrom! + 1} (plan reused)` });
+        await this.bus.emit('execution.resumed', { execution_id: execId, agent: agent.name, from_step: (extras.resumedFrom ?? 0) + 1 },
+          { actor_type: 'user', target_type: 'execution', target_id: execId }).catch(() => {});
+      } else {
+        await store.setAgentStatus(this.db, agent.id, 'planning');
+        await this.bus.emit('agent.thinking', { execution_id: execId, agent: agent.name, phase: 'planning' },
+          { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
+        const planPrompt = [
+          agent.system_instructions || 'You are an agent in the Agentic OS. Create a short plan.',
+          `User request: ${input}`,
+          project ? `Project context: ${project.name} — ${project.description}` : '',
+          mailbox.length ? `Messages from other agents:\n${mailbox.map(m => `- ${m.content.slice(0, 200)}`).join('\n')}` : '',
+          memories.length ? `Relevant memories:\n${memories.map(m => `- (${m.type}) ${m.summary}`).join('\n')}` : '',
+          `Produce a plan with the available tools: ${agent.tools.join(', ')}.`,
+        ].filter(Boolean).join('\n\n');
+        const planResp = await this.router.generate(
+          { capability: 'planning', system: PLANNER_SYSTEM, prompt: planPrompt, hint: { user_input: input, tools: agent.tools, memories: memories.map(m => m.id) } },
+          { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
+        );
+        plan = planResp.plan ?? {
+          rationale: 'Fallback plan (planner returned no structured plan)',
+          steps: [{ kind: 'model', capability: 'reasoning', prompt: 'Answer the request directly.', input_from: 'all' }],
+        };
+        await store.updateExecution(this.db, execId, { plan: JSON.stringify(plan), tokens_in: planResp.input_tokens, tokens_out: planResp.output_tokens });
+        await this.bus.emit('plan.created', { execution_id: execId, agent: agent.name, rationale: plan.rationale, steps: plan.steps.length },
+          { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId });
+        await emitTrace({ ts: iso(), kind: 'plan', message: plan.rationale, data: { steps: plan.steps.length, model: planResp.model_id } });
+      }
 
-      // 4) STEP EXECUTION LOOP
+      // 4) STEP EXECUTION LOOP (resume-aware, retry with backoff)
       await store.setAgentStatus(this.db, agent.id, 'executing');
       const ctx: ToolContext = {
-        execution_id: execId, agent, user_id: opts.user_id,
+        execution_id: execId, agent, user_id: opts.user_id, depth: extras.depth,
         emit: emitTrace, observe: (o) => { observations.push(o); },
       };
+      const startStep = extras.skipPlanning ? (extras.resumedFrom ?? 0) : 0;
 
-      for (let i = 0; i < plan.steps.length; i++) {
+      for (let i = startStep; i < plan.steps.length; i++) {
         // control checks between every step
         const ctl = this.control.get(execId);
         if (ctl?.stop) { await this.finish(execId, 'cancelled', null, 'Stopped by user', agent); return; }
@@ -145,23 +191,40 @@ export class AgentRuntime {
         await this.bus.emit('agent.executing', { execution_id: execId, agent: agent.name, step: i + 1, total: plan.steps.length, kind: step.kind },
           { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
 
-        const outcome = await this.executeStep(step, opts, execId, ctx, trace, observations, i);
-        if (!outcome.ok) {
+        // Phase 3: retry with exponential backoff (250ms * 2^n). User-initiated
+        // aborts and cancellations are never retried.
+        let outcome: StepOutcome | null = null;
+        let attempt = 0;
+        const maxAttempts = 1 + Math.max(0, config.stepRetries);
+        while (attempt < maxAttempts) {
+          outcome = await this.executeStep(step, opts, execId, ctx, trace, observations, i);
+          if (outcome.ok) break;
+          const aborted = this.control.get(execId)?.stop || /abort/i.test(outcome.error);
+          if (aborted || attempt >= maxAttempts - 1) break;
+          const backoff = 250 * Math.pow(2, attempt);
+          trace.push({ ts: iso(), kind: 'error', message: `Step ${i + 1} failed (attempt ${attempt + 1}/${maxAttempts}): ${outcome.error.slice(0, 140)} — retrying in ${backoff}ms` });
+          await persist();
+          await sleep(backoff);
+          attempt++;
+        }
+        const result = outcome!;
+
+        if (!result.ok) {
           // Phase 2: a user-initiated abort mid-generation surfaces as 'aborted' —
           // that is a CANCELLATION, not a failure.
-          if (this.control.get(execId)?.stop || /abort/i.test(outcome.error)) {
+          if (this.control.get(execId)?.stop || /abort/i.test(result.error)) {
             await this.finish(execId, 'cancelled', null, 'Stopped by user', agent);
             return;
           }
-          // failure recovery: notify + fail execution (retry policy per-step could hook here)
+          // failure recovery: notify + fail execution
           await store.notify(this.db, {
-            user_id: opts.user_id, title: `Agent ${agent.name} failed`, message: outcome.error.slice(0, 300),
+            user_id: opts.user_id, title: `Agent ${agent.name} failed`, message: result.error.slice(0, 300),
             priority: 'high', category: 'agent', source: 'runtime', related_type: 'execution', related_id: execId,
           });
-          await this.finish(execId, 'failed', null, outcome.error, agent);
+          await this.finish(execId, 'failed', null, result.error, agent);
           return;
         }
-        observations.push({ step: i + 1, source: step.kind, summary: summarizeOutcome(outcome.result), data: outcome.result as any });
+        observations.push({ step: i + 1, source: step.kind, summary: summarizeOutcome(result.result), data: result.result as any });
         await persist();
       }
 
@@ -411,7 +474,68 @@ export class AgentRuntime {
     const ctl = this.control.get(execId);
     if (ctl) { ctl.stop = true; ctl.pause = false; ctl.waiter?.('denied'); }
     this.abortAll(execId); // Phase 2: kill in-flight generations immediately
+    // Phase 3: cascade to delegated children (execution graph)
+    const children = await this.db.query<any>(
+      "SELECT id FROM executions WHERE parent_execution_id = ? AND status IN ('running','paused','approval_required')",
+      [execId],
+    );
+    for (const c of children) { await this.stop(c.id).catch(() => {}); }
     return true;
+  }
+
+  // ─── checkpoint resume (Phase 3) ─────────────────────────────────────────────
+  /** Resume an interrupted/paused execution from its persisted checkpoint.
+   *  Reuses the saved plan, observations and trace; continues at current_step.
+   *  NOTE on semantics: already-completed steps are NOT re-executed — a step
+   *  that was mid-flight when the process died will re-run (at-least-once).
+   *  Approval-gated steps re-request approval on resume. */
+  async resumeExecution(execId: string): Promise<ExecutionRecord | null> {
+    const ex = await store.getExecution(this.db, execId);
+    if (!ex) return null;
+    if (!['paused', 'interrupted'].includes(ex.status)) return ex;
+    const agent = await store.getAgent(this.db, ex.agent_id);
+    if (!agent) return null;
+    // resume from the persisted step marker; completed observations are kept
+    const resumeFrom = Math.max(0, ex.current_step - 1); // current_step is 1-based; the step it was ON may re-run
+    this.control.set(execId, { pause: false, stop: false, waiter: null });
+    await store.updateExecution(this.db, execId, { status: 'running' });
+    await store.setAgentStatus(this.db, agent.id, 'executing');
+    this.drive(
+      {
+        agent, input: ex.input, user_id: ex.user_id, project_id: ex.project_id ?? null,
+        task_id: ex.task_id ?? null,
+        extras: {
+          depth: 0, resumedFrom: resumeFrom, skipPlanning: true,
+          resumedObservations: ex.observations, resumedTrace: ex.trace,
+        },
+      },
+      execId,
+    ).catch(async (e) => {
+      await this.finish(execId, 'failed', null, String(e?.message ?? e), agent);
+    });
+    return store.getExecution(this.db, execId);
+  }
+
+  /** Boot-time recovery: executions left 'running'/'approval_required' by a dead
+   *  process are marked 'interrupted' (resumable via POST /executions/:id/resume
+   *  or the Activity panel). At-least-once: a step mid-flight at crash time
+   *  re-runs on resume. */
+  async recoverInterrupted(): Promise<number> {
+    const rows = await this.db.query<any>(
+      "SELECT id, agent_id FROM executions WHERE status IN ('running', 'approval_required')",
+    );
+    for (const r of rows) {
+      await store.updateExecution(this.db, r.id, { status: 'interrupted' });
+      await store.setAgentStatus(this.db, r.agent_id, 'idle');
+      await this.bus.emit('execution.interrupted', { execution_id: r.id, reason: 'process restart' },
+        { actor_type: 'system', target_type: 'execution', target_id: r.id }).catch(() => {});
+      // deny any approval that was pending on the dead execution
+      await this.db.run(
+        "UPDATE approvals SET status = 'timeout', decided_at = ? WHERE execution_id = ? AND status = 'pending'",
+        [iso(), r.id],
+      ).catch(() => {});
+    }
+    return rows.length;
   }
 
   private async finish(execId: string, status: ExecutionRecord['status'], result: string | null, error: string | null, agent: AgentRecord): Promise<void> {

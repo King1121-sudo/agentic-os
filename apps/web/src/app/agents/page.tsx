@@ -7,7 +7,9 @@ const AUTONOMY = ['L0 Observe', 'L1 Suggest', 'L2 Approval', 'L3 Auto', 'L4 Auto
 
 export default function AgentsPage() {
   const agents = usePoll(() => api('/api/agents'), 3000) as any[] | null;
+  const messages = usePoll(() => api('/api/agent-messages'), 5000) as any[] | null;
   const [showCreate, setShowCreate] = useState(false);
+  const [showMailbox, setShowMailbox] = useState(true);
 
   return (
     <Shell title="Agents">
@@ -16,8 +18,33 @@ export default function AgentsPage() {
           <h1 style={{ fontSize: 18, fontWeight: 700 }}>Agent Registry</h1>
           <div className="xs faint">Registered agents with model policy, tools, memory policy, autonomy</div>
         </div>
-        <button className="primary" onClick={() => setShowCreate(s => !s)}>+ New Agent</button>
+        <div className="row">
+          {messages && messages.length > 0 && (
+            <button onClick={() => setShowMailbox(s => !s)}>{showMailbox ? 'Hide' : 'Show'} mailbox ({messages.length})</button>
+          )}
+          <button className="primary" onClick={() => setShowCreate(s => !s)}>+ New Agent</button>
+        </div>
       </div>
+
+      {showMailbox && messages && messages.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <h3>Agent Mailbox <span className="count">{messages.filter((m: any) => m.status === 'pending').length} pending</span></h3>
+          {(messages ?? []).slice(0, 8).map((m: any) => (
+            <div key={m.id} className="item">
+              <span className={`dot ${m.status === 'pending' ? 'd-amber' : 'd-gray'}`} />
+              <div className="grow">
+                <div className="small">{m.content?.slice(0, 120)}</div>
+                <div className="xs faint mono">
+                  {m.from_agent_id ? `agent:${m.from_agent_id.slice(0, 8)}` : 'user'} → agent:{String(m.to_agent_id).slice(0, 8)} · {m.status} · {m.created_at?.slice(11, 19)}
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className="xs faint" style={{ marginTop: 6 }}>
+            Pending messages inject into the receiving agent's next planning context.
+          </div>
+        </div>
+      )}
 
       {showCreate && <CreateAgent onDone={() => setShowCreate(false)} />}
 

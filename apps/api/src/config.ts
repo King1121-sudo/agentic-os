@@ -33,7 +33,9 @@ export const config = {
   },
   ollama: { baseUrl: process.env.OLLAMA_BASE_URL ?? '' },
   approvalTimeoutS: num(process.env.APPROVAL_TIMEOUT_S, 300),
+  stepRetries: num(process.env.AGENTIC_STEP_RETRIES, 1),
+  maxDelegationDepth: num(process.env.AGENTIC_MAX_DELEGATION_DEPTH, 2),
   seedAdmin: { username: str(process.env.SEED_ADMIN_USER, 'admin'), password: str(process.env.SEED_ADMIN_PASSWORD, 'admin123') },
   allowShell: str(process.env.AGENTIC_ALLOW_SHELL, '0') === '1',
-  version: '0.2.0',
+  version: '0.3.0',
 };

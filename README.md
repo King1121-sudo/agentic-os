@@ -54,6 +54,8 @@ The Model Router health-probes providers at boot + every 60s, picks models by ca
 | Model Gateway (4 provider adapters incl. Gemini, streaming + cancellation, health + capability routing, fallback) | ✅ live | `gateway/*` |
 | Usage & cost accounting (list-price registry, per-model ledger, Settings → Model Usage) | ✅ live | `gateway/costs.ts`, `/api/models/usage` |
 | Agent Runtime (states, pause/resume/stop, approval gates, tracing, checkpointing) | ✅ live | `modules/runtime.ts` |
+| Delegation + agent messaging (execution graph, depth guard, mailbox) | ✅ live | `agent.delegate` / `agent.message` tools |
+| Crash recovery + checkpoint resume (interrupted → resumable, at-least-once) | ✅ live | `runtime.recoverInterrupted/resumeExecution` |
 | Memory Engine (7 types, composite scoring, dedup, decay, consolidation) | ✅ live | `modules/memory.ts` |
 | Tool Runtime (12 tools, risk classes, permission scopes, sandboxed files) | ✅ live | `modules/tools.ts` |
 | Skills (registry, composable steps, skill tree UI) | ✅ live | store + UI |

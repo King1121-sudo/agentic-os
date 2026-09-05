@@ -155,6 +155,8 @@ const PLAN_TOOL_HINTS: { re: RegExp; step: any }[] = [
   { re: /\b(run|execute)\b.*\b(command|shell|script)\b/i, step: { kind: 'tool', tool: 'shell.run', args: {} } },
   { re: /\b(notify|alert|ping me|send (?:a )?notification|remind me)\b/i, step: { kind: 'tool', tool: 'notify', args: {} } },
   { re: /\b(calc|compute|evaluate)\b/i, step: { kind: 'tool', tool: 'calc.eval', args: {} } },
+  { re: /\bdelegate\b|\b(?:have|ask|let)\s+(?:the\s+)?(?:coder|researcher|monitor|planner)\b/i, step: { kind: 'tool', tool: 'agent.delegate', args: {} } },
+  { re: /\b(?:send|leave)\s+(?:a\s+)?message\s+(?:to|for)\b/i, step: { kind: 'tool', tool: 'agent.message', args: {} } },
 ];
 
 /** Extract plausible args for a tool from free text. */
@@ -228,6 +230,23 @@ function extractArgs(tool: string, prompt: string): Record<string, unknown> {
   if (tool === 'task.update') {
     const m = t.match(/\b(?:task\s*)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8})\b/i);
     return m ? { task_id: m[1], status: 'done' } : { status: 'done' };
+  }
+
+  if (tool === 'agent.delegate') {
+    // "delegate to Coder: write a parser" | "have the researcher look up X"
+    const m = t.match(/(?:delegate\s+(?:to|the)\s+|ask\s+(?:the\s+)?|have\s+(?:the\s+)?|tell\s+(?:the\s+)?|let\s+(?:the\s+)?)([A-Za-z]+)\s*(?:to|:)?\s*(.*)$/i);
+    const name = m?.[1];
+    const task = m?.[2]?.trim();
+    if (name && task) return { agent_name: name, task };
+    const m2 = t.match(/\b(coder|researcher|monitor|planner|hermes)\b[^:]*:?\s*(.+)$/i);
+    if (m2) return { agent_name: m2[1], task: m2[2].trim() };
+    return {};
+  }
+
+  if (tool === 'agent.message') {
+    const m = t.match(/(?:message\s+(?:to|for)\s+|tell\s+)([A-Za-z]+)[\s:]+(.+)$/i) ?? t.match(/\b(coder|researcher|monitor|planner|hermes)\b[\s:]+(.+)$/i);
+    if (m) return { agent_name: m[1], content: m[2].trim().slice(0, 1000) };
+    return {};
   }
 
   return {};
@@ -529,6 +548,7 @@ export class GeminiProvider implements ModelProviderPort {
 export const PLANNER_TOOLS = [
   'memory.write', 'memory.search', 'task.create', 'task.update', 'task.list',
   'project.create', 'http.fetch', 'file.write', 'shell.run', 'notify', 'calc.eval',
+  'agent.delegate', 'agent.message',
 ];
 
 export function abortErr(): Error {

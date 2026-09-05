@@ -8,6 +8,7 @@ import type { DataPort } from './types';
 
 const MIGRATIONS: { id: string; file: string }[] = [
   { id: '001_kernel', file: '001_kernel.sql' },
+  { id: '002_agent_messages', file: '002_agent_messages.sql' },
 ];
 
 export async function runMigrations(db: DataPort): Promise<string[]> {

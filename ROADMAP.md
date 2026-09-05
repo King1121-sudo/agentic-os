@@ -39,12 +39,18 @@ the HTTP shell later is mechanical if needed.
 - [x] Usage accounting: `GET /api/models/usage` (gens, ✓/✗/⊘, tokens, cost, avg latency) + Settings → Model Usage table
 - [x] Phase 2 test suite (streaming reconstruction, abort→cancelled, cost lookup, usage aggregation, gemini body/health) — 25/25 green
 
-## Phase 3 — Agent runtime maturation (next)
-- subagent delegation (execution graph, parent_execution_id already in schema)
-- retry/backoff policy per step, checkpoint resume across process restarts
-- agent-to-agent messaging, planner→specialist routing in the command center
+## Phase 3 — Agent runtime maturation ✅ (v0.3.0)
 
-## Phase 4 — Skills
+- [x] Subagent delegation: `agent.delegate` tool → child execution with `parent_execution_id` + `delegated_to` graph link; parent awaits child result; depth guard (`AGENTIC_MAX_DELEGATION_DEPTH`, default 2) blocks runaway chains; stop cascades to children
+- [x] Per-step retry with exponential backoff (250ms · 2ⁿ, `AGENTIC_STEP_RETRIES`, default 1); user-initiated aborts never retried; retry attempts traced
+- [x] Checkpoint resume: executions orphaned by a process crash are marked `interrupted` at boot (approvals timed out, agents released); `POST /executions/:id/resume` continues from the persisted plan/trace/observations at the current step (at-least-once: a step mid-flight at crash time re-runs)
+- [x] Agent-to-agent messaging: `agent.message` tool → mailbox table; pending messages inject into the receiver's next planning context (and surface in its trace); Agents panel shows the mailbox
+- [x] Command-center specialist routing: explicit ("ask the coder to…") and keyword-based (research→Researcher, code→Coder, status→Monitor, plan→Planner); delegation phrasing deliberately routes to Hermes so the supervisor builds a real delegation graph
+- [x] Seed upgrade path: uncustomized built-in agents are refreshed to the current seed definition on boot (user-customized toolsets preserved) — fixes v0.1→v0.3 upgrades silently missing new tools
+- [x] Execution-graph UI: trace viewer shows delegated child executions (clickable); interrupted executions get a purple badge + "Resume from checkpoint"
+- [x] 7 new tests (32 total): delegation graph + child wait, depth guard rejection, mailbox injection + consumption, retry trace evidence, recoverInterrupted, checkpoint resume
+
+## Phase 4 — Skills (next)
 - skill inheritance + versioning (parent_id, version columns ready)
 - permission-aware execution history + performance metrics
 - SDK: skills defined as JSON/YAML files, hot-loadable

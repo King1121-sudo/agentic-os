@@ -8,6 +8,8 @@ export interface ToolContext {
   execution_id: string | null;
   agent: AgentRecord;
   user_id: string;
+  /** Phase 3: delegation depth (0 = top-level). Guarded by AGENTIC_MAX_DELEGATION_DEPTH. */
+  depth: number;
   emit: (entry: TraceEntry) => void;
   observe: (o: Observation) => void;
 }

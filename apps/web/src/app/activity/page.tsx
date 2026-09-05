@@ -58,6 +58,7 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
   const exec = usePoll(() => api(`/api/executions/${execId}`), 2000, [execId]);
   const [audit, setAudit] = useState<any[]>([]);
   const [gens, setGens] = useState<any[]>([]);
+  const [children, setChildren] = useState<any[]>([]);
   const [showAudit, setShowAudit] = useState(false);
   // Phase 2: live token stream for THIS execution (volatile SSE events)
   const [liveText, setLiveText] = useState<{ phase: string; text: string } | null>(null);
@@ -65,6 +66,7 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
   useEffect(() => {
     api(`/api/audit?execution_id=${execId}`).then(setAudit).catch(() => {});
     api(`/api/generations?execution_id=${execId}`).then(setGens).catch(() => {});
+    api(`/api/executions/${execId}/children`).then(setChildren).catch(() => {});
   }, [execId]);
 
   // subscribe to token deltas for this execution
@@ -96,7 +98,8 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
   if (!exec) return null;
   const e: any = exec;
   const statusBadge = e.status === 'completed' ? 'b-green' : e.status === 'failed' ? 'b-red' :
-    e.status === 'approval_required' ? 'b-amber' : e.status === 'paused' ? 'b-amber' : e.status === 'cancelled' ? 'b-gray' : 'b-blue';
+    e.status === 'approval_required' ? 'b-amber' : e.status === 'paused' ? 'b-amber' :
+    e.status === 'interrupted' ? 'b-purple' : e.status === 'cancelled' ? 'b-gray' : 'b-blue';
   const streaming = ['running', 'approval_required', 'paused'].includes(e.status) && liveText;
 
   return (
@@ -127,11 +130,26 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
 
       <div className="row wrap" style={{ marginBottom: 12, gap: 6 }}>
         {e.status === 'running' && <button onClick={() => post(`/api/executions/${execId}/pause`, {})}>Pause</button>}
-        {e.status === 'paused' && <button onClick={() => post(`/api/executions/${execId}/resume`, {})}>Resume</button>}
-        {['running', 'paused', 'approval_required'].includes(e.status) && <button className="danger" onClick={() => post(`/api/executions/${execId}/stop`, {})}>Stop</button>}
+        {(e.status === 'paused' || e.status === 'interrupted') && <button className="primary" onClick={() => post(`/api/executions/${execId}/resume`, {})}>Resume from checkpoint</button>}
+        {['running', 'paused', 'approval_required', 'interrupted'].includes(e.status) && <button className="danger" onClick={() => post(`/api/executions/${execId}/stop`, {})}>Stop</button>}
         <button className={showAudit ? 'primary' : ''} onClick={() => setShowAudit(s => !s)}>Audit ({audit.length})</button>
         <span className="badge b-gray">{e.tokens_in}+{e.tokens_out} tok</span>
       </div>
+
+      {children.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="xs faint" style={{ marginBottom: 4 }}>DELEGATED EXECUTIONS ({children.length})</div>
+          {children.map((c: any) => (
+            <div key={c.id} className="item" onClick={() => window.open(`/activity?exec=${c.id}`, '_self')}>
+              <span className={`dot ${c.status === 'completed' ? 'd-green' : c.status === 'failed' ? 'd-red' : c.status === 'running' ? 'd-blue' : 'd-gray'}`} />
+              <div className="grow">
+                <div className="small">{c.input?.slice(0, 80)}</div>
+                <div className="xs faint mono">{c.id.slice(0, 8)} · {c.status}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {e.plan && (
         <div style={{ marginBottom: 12 }}>

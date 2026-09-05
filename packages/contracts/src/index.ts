@@ -18,7 +18,7 @@ export type AgentStatus =
   | 'idle' | 'thinking' | 'planning' | 'executing' | 'waiting'
   | 'paused' | 'approval_required' | 'completed' | 'failed' | 'cancelled';
 export type ExecutionStatus =
-  | 'running' | 'paused' | 'approval_required' | 'completed' | 'failed' | 'cancelled';
+  | 'running' | 'paused' | 'approval_required' | 'interrupted' | 'completed' | 'failed' | 'cancelled';
 export type MemoryType =
   | 'working' | 'episodic' | 'semantic' | 'preference' | 'project' | 'procedural' | 'entity';
 export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'archived';
@@ -52,7 +52,8 @@ export type EventType =
   | 'generation.started' | 'generation.completed' | 'generation.failed'
   | 'notification.created' | 'link.created' | 'integration.event'
   | 'user.login' | 'user.logout' | 'system.ready'
-  | 'agent.token' | 'generation.cancelled';
+  | 'agent.token' | 'generation.cancelled'
+  | 'agent.delegated' | 'agent.messaged' | 'execution.resumed' | 'execution.interrupted';
 
 export interface OsEvent {
   id: Uuid;

@@ -12,7 +12,7 @@ import { runMigrations } from './infra/migrations';
 import { EventBus } from './kernel/bus';
 import { ModelRouter } from './gateway/router';
 import { BuiltinProvider, OpenAICompatProvider, OllamaProvider, GeminiProvider } from './gateway/providers';
-import { ToolRegistry, createBuiltinTools } from './modules/tools';
+import { ToolRegistry, createBuiltinTools, setRuntimeRef } from './modules/tools';
 import { AgentRuntime } from './modules/runtime';
 import { buildApi } from './app';
 import { seed } from './seed';
@@ -63,6 +63,11 @@ async function main() {
 
   // 7) RUNTIME
   const runtime = new AgentRuntime(db, broker, bus, router, tools);
+  setRuntimeRef(runtime); // Phase 3: tools (agent.delegate/message) need the runtime
+
+  // 7b) BOOT RECOVERY — executions orphaned by a previous process crash
+  const recovered = await runtime.recoverInterrupted();
+  if (recovered > 0) console.log(`[boot] recovery: ${recovered} interrupted execution(s) marked resumable`);
 
   // 8) API
   const app = buildApi({ db, broker, bus, router, runtime, tools });

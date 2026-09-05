@@ -179,7 +179,15 @@ export function buildApi(deps: ApiDeps) {
   });
 
   app.post('/api/executions/:id/pause', async (req: any) => ({ ok: await runtime.pause(req.params.id) }));
-  app.post('/api/executions/:id/resume', async (req: any) => ({ ok: await runtime.resume(req.params.id) }));
+  app.post('/api/executions/:id/resume', async (req: any) => {
+    // Phase 3: resume works for paused AND interrupted (crash-recovered) executions
+    const ex = await store.getExecution(db, req.params.id);
+    if (ex && ex.status === 'interrupted') {
+      const r = await runtime.resumeExecution(req.params.id);
+      return { ok: !!r, resumed: true, execution: r };
+    }
+    return { ok: await runtime.resume(req.params.id), resumed: ex?.status === 'paused' };
+  });
   app.post('/api/executions/:id/stop', async (req: any) => ({ ok: await runtime.stop(req.params.id) }));
 
   app.get('/api/executions', async (req: any) => {
@@ -187,6 +195,15 @@ export function buildApi(deps: ApiDeps) {
     return store.listExecutions(db, limit);
   });
   app.get('/api/executions/:id', async (req: any) => store.getExecution(db, req.params.id));
+  // Phase 3: execution graph — child (delegated) executions of a parent
+  app.get('/api/executions/:id/children', async (req: any) => {
+    const rows = await db.query<any>(
+      'SELECT * FROM executions WHERE parent_execution_id = ? ORDER BY started_at', [req.params.id]);
+    return rows.map(store.parseExecution);
+  });
+
+  // Phase 3: agent-to-agent message log
+  app.get('/api/agent-messages', async () => store.listAgentMessages(db, 100));
 
   // ─── models ────────────────────────────────────────────────────────────────
   app.get('/api/models', async () => ({
@@ -529,11 +546,43 @@ export function buildApi(deps: ApiDeps) {
       return { kind: 'unimplemented', text: 'The Automation Engine (cron/webhook/event triggers) is Phase 8 in ROADMAP.md. The event bus it will subscribe to is live — every action you take now already emits events.' };
     }
 
-    // route everything else to Hermes (the generalist agent)
-    const agent = (await store.getAgentByName(db, 'Hermes')) ?? (await store.listAgents(db))[0];
+    // route everything else through specialist detection (Phase 3), falling back to Hermes
+    const specialist = await detectSpecialist(t);
+    const agent = specialist ?? (await store.getAgentByName(db, 'Hermes')) ?? (await store.listAgents(db))[0];
     if (!agent) return { kind: 'result', text: 'No agents registered. Run: npm run seed' };
     const exec = await runtime.run({ agent, input: text, user_id: user.id });
     return { kind: 'execution', execution_id: exec.id, agent_id: agent.id, agent_name: agent.name };
+  }
+
+  /** Phase 3: specialist routing — explicit or keyword-based agent selection.
+   *  Delegation phrasing ("delegate to X", "have X do Y") intentionally routes to
+   *  Hermes so the supervisor creates a real delegation graph via agent.delegate. */
+  async function detectSpecialist(t: string): Promise<any | null> {
+    // delegation phrasing → supervisor orchestrates (agent.delegate creates the child execution)
+    if (/\bdelegate\s+(?:to|the)\b/i.test(t) || /\bdelegate\b.*\bto\s+(?:the\s+)?(?:coder|researcher|monitor|planner)\b/i.test(t)) {
+      return null; // fall through to Hermes
+    }
+    // explicit direct routing: "ask the coder to …" / "tell Monitor to …"
+    const explicit = t.match(/\b(?:ask|tell|have|get|instruct)\s+(?:the\s+)?([A-Za-z]+)\s+to\b/i);
+    const name = explicit?.[1];
+    if (name) {
+      const agent = await store.getAgentByName(db, name);
+      if (agent) return agent;
+    }
+    // keyword-based specialist matching
+    const rules: { re: RegExp; agent: string }[] = [
+      { re: /\b(research|investigate|find out|look up|fetch.*url|sources?|web|paper|article)\b/i, agent: 'Researcher' },
+      { re: /\b(code|implement|write.*script|refactor|debug|fix.*bug|build|program|html|css)\b/i, agent: 'Coder' },
+      { re: /\b(status|health|monitor|watch|alert|system)\b/i, agent: 'Monitor' },
+      { re: /\b(plan|roadmap|break ?down|milestone|sprint|goals?)\b/i, agent: 'Planner' },
+    ];
+    for (const r of rules) {
+      if (r.re.test(t)) {
+        const agent = await store.getAgentByName(db, r.agent);
+        if (agent) return agent;
+      }
+    }
+    return null;
   }
 
   // ─── dashboard (home widgets data) ────────────────────────────────────────

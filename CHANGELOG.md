@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 — Agent runtime maturation (Phase 3, 2026-09-05)
+
+### Added
+- **Subagent delegation**: `agent.delegate` tool spawns a child execution (own plan, tools, gates) with `parent_execution_id` + `delegated_to` link in the knowledge graph; the parent awaits the child's terminal state and records its result as an observation. Depth guard (`AGENTIC_MAX_DELEGATION_DEPTH`, default 2) blocks runaway chains; `stop()` cascades to in-flight children.
+- **Agent-to-agent messaging**: `agent.message` tool writes to a persistent mailbox (`agent_messages` table, migration 002); pending messages are consumed and injected into the receiving agent's next planning context; Agents panel shows the mailbox feed.
+- **Checkpoint resume**: new `interrupted` execution status. At boot, `recoverInterrupted()` marks executions orphaned by a crash (their pending approvals time out, agents release to idle). `POST /api/executions/:id/resume` (or the UI button) continues from the persisted plan/trace/observations at the current step — at-least-once semantics (a step mid-flight at crash time re-runs; approval-gated steps re-request approval). Verified live: crash while approval-gated → reboot → interrupted → resume → re-gate → approve → completed, task created.
+- **Per-step retry/backoff**: failed steps retry up to `AGENTIC_STEP_RETRIES` (default 1) with exponential backoff (250ms·2ⁿ); user-initiated cancellations never retry; retry attempts appear in the trace.
+- **Specialist routing in the command center**: explicit ("ask the coder to…") and keyword-based routing (research→Researcher, code→Coder, status→Monitor, plan→Planner) with Hermes as fallback; delegation phrasing ("delegate to X: …") intentionally routes to Hermes so the supervisor builds a real delegation graph.
+- **Execution-graph UI**: trace viewer lists delegated child executions with status dots (click to open); interrupted executions get a purple badge and a "Resume from checkpoint" button.
+- `GET /api/executions/:id/children` (delegation graph) and `GET /api/agent-messages` (mailbox log).
+
+### Fixed
+- **Seed upgrade path**: existing built-in agents were never refreshed on boot, so upgrades silently missed new tools (v0.1 Hermes had no `agent.delegate` — delegation was gate-denied in the live E2E). Uncustomized built-ins now refresh to the current seed definition; user-customized toolsets are preserved.
+- Specialist detection no longer hijacks delegation commands (bare agent-name match removed).
+
 ## 0.2.0 — Model Gateway hardening (Phase 2, 2026-09-05)
 
 ### Added

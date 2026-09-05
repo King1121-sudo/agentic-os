@@ -13,6 +13,11 @@ export type { ToolDef } from '../kernel/types';
 import { config } from '../config';
 import * as store from './store';
 import { createMemory, searchMemory } from './memory';
+import type { AgentRuntime } from './runtime';
+
+/** Phase 3: set by main.ts after the runtime is constructed (avoids the cycle). */
+let runtimeRef: AgentRuntime | null = null;
+export function setRuntimeRef(r: AgentRuntime): void { runtimeRef = r; }
 
 const SANDBOX = path.resolve(config.dataDir, 'sandbox');
 
@@ -227,6 +232,62 @@ export function createBuiltinTools(db: DataPort): ToolDef[] {
       async execute() {
         const counts = await healthCounts(db);
         return { version: config.version, platform: `${os.platform()}/${os.arch()}`, counts };
+      },
+    },
+    {
+      name: 'agent.delegate',
+      description: 'Delegate a subtask to another registered agent. Returns the child execution result (parent waits). Depth-limited.',
+      risk: 'medium', scope: 'agents:delegate',
+      schema: {
+        agent_name: { type: 'string', required: true, description: 'Target agent name (e.g. Coder, Researcher)' },
+        task: { type: 'string', required: true, description: 'The subtask instruction for the agent' },
+      },
+      async execute(args, ctx) {
+        if (!runtimeRef) throw new Error('Runtime not wired');
+        const target = await store.getAgentByName(db, String(args.agent_name));
+        if (!target) throw new Error(`Agent not found: ${args.agent_name}`);
+        if (target.id === ctx.agent.id) throw new Error('Cannot delegate to self');
+        // depth guard — prevent runaway delegation chains/cycles
+        const childDepth = ctx.depth + 1;
+        if (childDepth > config.maxDelegationDepth) {
+          throw new Error(`Delegation depth limit (${config.maxDelegationDepth}) exceeded`);
+        }
+        const childExec = await runtimeRef.run({
+          agent: target, input: String(args.task), user_id: ctx.user_id,
+          extras: { depth: childDepth, parentExecId: ctx.execution_id ?? undefined },
+        });
+        // wait for the child to reach a terminal state (poll; children are short-lived)
+        const deadline = Date.now() + 5 * 60 * 1000;
+        let child = await store.getExecution(db, childExec.id);
+        while (child && !['completed', 'failed', 'cancelled'].includes(child.status) && Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 300));
+          child = await store.getExecution(db, childExec.id);
+        }
+        return {
+          child_execution_id: childExec.id,
+          agent: target.name,
+          status: child?.status ?? 'timeout',
+          result: child?.result?.slice(0, 2000) ?? null,
+          error: child?.error ?? null,
+        };
+      },
+    },
+    {
+      name: 'agent.message',
+      description: 'Send an async message to another agent. Injected into the target\'s next planning context.',
+      risk: 'low', scope: 'agents:message',
+      schema: {
+        agent_name: { type: 'string', required: true, description: 'Target agent name' },
+        content: { type: 'string', required: true, description: 'Message content' },
+      },
+      async execute(args, ctx) {
+        const target = await store.getAgentByName(db, String(args.agent_name));
+        if (!target) throw new Error(`Agent not found: ${args.agent_name}`);
+        const msg = await store.createAgentMessage(db, {
+          from_agent_id: ctx.agent.id, to_agent_id: target.id,
+          execution_id: ctx.execution_id, content: String(args.content),
+        });
+        return { message_id: msg.id, to: target.name };
       },
     },
   ];

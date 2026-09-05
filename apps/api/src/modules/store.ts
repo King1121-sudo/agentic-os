@@ -8,7 +8,7 @@ import { syncEntity } from '../infra/migrations';
 import { safeJson } from '../kernel/bus';
 import type {
   AgentRecord, TaskRecord, ProjectRecord, SprintRecord, MemoryRecord,
-  NotificationRecord, LinkRecord, ApprovalRecord, ExecutionRecord, SkillRecord,
+  NotificationRecord, LinkRecord, ApprovalRecord, ExecutionRecord, SkillRecord, Uuid, Iso,
 } from '@agentic/contracts';
 
 const J = JSON.stringify;
@@ -237,6 +237,43 @@ export async function listNotifications(db: DataPort, userId: string, status?: s
     ? await db.query<any>('SELECT * FROM notifications WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 100', [userId, status])
     : await db.query<any>('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', [userId]);
   return rows;
+}
+
+// ─── agent-to-agent messages (Phase 3) ─────────────────────────────────────
+export interface AgentMessageRecord {
+  id: Uuid; from_agent_id: string | null; to_agent_id: string; execution_id: string | null;
+  content: string; status: 'pending' | 'read'; created_at: Iso; read_at: Iso | null;
+}
+
+export async function createAgentMessage(
+  db: DataPort, m: { from_agent_id?: string | null; to_agent_id: string; execution_id?: string | null; content: string },
+): Promise<AgentMessageRecord> {
+  const rec: AgentMessageRecord = {
+    id: uuid(), from_agent_id: m.from_agent_id ?? null, to_agent_id: m.to_agent_id,
+    execution_id: m.execution_id ?? null, content: m.content, status: 'pending',
+    created_at: iso(), read_at: null,
+  };
+  await db.run(
+    'INSERT INTO agent_messages (id, from_agent_id, to_agent_id, execution_id, content, status, created_at, read_at) VALUES (?,?,?,?,?,?,?,?)',
+    [rec.id, rec.from_agent_id, rec.to_agent_id, rec.execution_id, rec.content, rec.status, rec.created_at, rec.read_at],
+  );
+  return rec;
+}
+
+export async function pendingMessagesFor(db: DataPort, agentId: string, markRead = true): Promise<AgentMessageRecord[]> {
+  const rows = await db.query<any>(
+    'SELECT * FROM agent_messages WHERE to_agent_id = ? AND status = ? ORDER BY created_at LIMIT 10',
+    [agentId, 'pending'],
+  );
+  if (markRead && rows.length) {
+    await db.run("UPDATE agent_messages SET status = 'read', read_at = ? WHERE to_agent_id = ? AND status = 'pending'", [iso(), agentId]);
+  }
+  return rows.map(r => ({ ...r, status: r.status as any }));
+}
+
+export async function listAgentMessages(db: DataPort, limit = 100): Promise<AgentMessageRecord[]> {
+  const rows = await db.query<any>('SELECT * FROM agent_messages ORDER BY created_at DESC LIMIT ?', [limit]);
+  return rows.map(r => ({ ...r, status: r.status as any }));
 }
 
 // ─── links ──────────────────────────────────────────────────────────────────
