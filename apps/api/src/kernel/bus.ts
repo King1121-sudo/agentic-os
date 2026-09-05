@@ -36,6 +36,17 @@ export class EventBus {
     return ev;
   }
 
+  /** Phase 2: high-frequency events (token deltas) — broadcast ONLY.
+   *  Never persisted: the generations ledger already stores the full output. */
+  async emitVolatile(type: EventType, data: unknown, opts: { actor_type?: OsEvent['actor_type']; actor_id?: string } = {}): Promise<void> {
+    const ev: OsEvent = {
+      id: uuid(), type, data: data ?? {},
+      actor_type: opts.actor_type ?? 'agent', actor_id: opts.actor_id,
+      created_at: iso(),
+    };
+    await this.broker.publish(CHANNEL, ev);
+  }
+
   async list(limit = 100, types?: string[]): Promise<OsEvent[]> {
     const rows = await this.db.query<any>(
       `SELECT * FROM events ${types && types.length ? 'WHERE type IN (' + types.map(() => '?').join(',') + ') ' : ''}

@@ -47,11 +47,14 @@ export interface ModelResponse {
 export interface ModelProviderPort {
   id: string;
   name: string;
-  kind: 'builtin' | 'openai-compat' | 'ollama';
+  kind: 'builtin' | 'openai-compat' | 'ollama' | 'gemini';
   healthy(): Promise<boolean>;
   /** Cheap capability probe used by the router's health tracker. */
   listModels(): Promise<string[]>;
   generate(req: ModelRequest, model_id: string): Promise<ModelResponse>;
+  /** Phase 2: streaming generation with abort support. Optional — the router
+   *  falls back to generate() (single-chunk) when a provider lacks it. */
+  generateStream?(req: ModelRequest, model_id: string, onToken: (delta: string) => void, signal?: AbortSignal): Promise<ModelResponse>;
 }
 
 // ─── autonomy + risk policy (security engine, §25 + §24) ───────────────────

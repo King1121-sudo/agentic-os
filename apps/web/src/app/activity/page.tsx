@@ -59,16 +59,45 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
   const [audit, setAudit] = useState<any[]>([]);
   const [gens, setGens] = useState<any[]>([]);
   const [showAudit, setShowAudit] = useState(false);
+  // Phase 2: live token stream for THIS execution (volatile SSE events)
+  const [liveText, setLiveText] = useState<{ phase: string; text: string } | null>(null);
 
   useEffect(() => {
     api(`/api/audit?execution_id=${execId}`).then(setAudit).catch(() => {});
     api(`/api/generations?execution_id=${execId}`).then(setGens).catch(() => {});
   }, [execId]);
 
+  // subscribe to token deltas for this execution
+  useEffect(() => {
+    const es = new EventSource('/api/stream');
+    es.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        if (ev.type === 'agent.token' && ev.data?.execution_id === execId) {
+          setLiveText(prev => {
+            const phase = ev.data.phase ?? '…';
+            if (prev && prev.phase === phase) return { phase, text: prev.text + ev.data.delta };
+            return { phase, text: ev.data.delta };
+          });
+        }
+      } catch { /* skip */ }
+    };
+    return () => es.close();
+  }, [execId]);
+
+  // clear the live stream once the execution settles
+  useEffect(() => {
+    if (exec && ['completed', 'failed', 'cancelled'].includes((exec as any).status)) {
+      const t = setTimeout(() => setLiveText(null), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [exec]);
+
   if (!exec) return null;
   const e: any = exec;
   const statusBadge = e.status === 'completed' ? 'b-green' : e.status === 'failed' ? 'b-red' :
-    e.status === 'approval_required' ? 'b-amber' : e.status === 'paused' ? 'b-amber' : 'b-blue';
+    e.status === 'approval_required' ? 'b-amber' : e.status === 'paused' ? 'b-amber' : e.status === 'cancelled' ? 'b-gray' : 'b-blue';
+  const streaming = ['running', 'approval_required', 'paused'].includes(e.status) && liveText;
 
   return (
     <div className="card" style={{ maxHeight: '72vh', overflowY: 'auto', position: 'sticky', top: 64 }}>
@@ -80,6 +109,21 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
         <button className="ghost" onClick={onClose}>✕</button>
       </div>
       <div className="xs dim" style={{ marginBottom: 10 }}>{e.input}</div>
+
+      {streaming && (
+        <div style={{
+          marginBottom: 12, border: '1px solid var(--accent)', borderRadius: 8,
+          background: 'var(--accent-soft)', padding: '8px 12px',
+        }}>
+          <div className="row between" style={{ marginBottom: 4 }}>
+            <span className="badge b-blue">streaming · {liveText!.phase}</span>
+            <button className="danger" onClick={() => post(`/api/executions/${execId}/stop`, {})}>■ Stop</button>
+          </div>
+          <div className="mono xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 120, overflowY: 'auto' }}>
+            {liveText!.text}
+          </div>
+        </div>
+      )}
 
       <div className="row wrap" style={{ marginBottom: 12, gap: 6 }}>
         {e.status === 'running' && <button onClick={() => post(`/api/executions/${execId}/pause`, {})}>Pause</button>}

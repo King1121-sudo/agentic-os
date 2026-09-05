@@ -13,6 +13,7 @@ import type { Capability } from '@agentic/contracts';
 import type { DataPort } from '../infra/types';
 import { iso } from '../infra/types';
 import { heuristicPlan, estimateTokens } from './providers';
+import { lookupCosts } from './costs';
 import type { Plan } from '@agentic/contracts';
 
 interface RouterModel {
@@ -69,17 +70,27 @@ export class ModelRouter {
   private async upsertModel(p: ModelProviderPort, mid: string) {
     const fullId = `${p.id}:${mid}`;
     const caps = inferCapabilities(p, mid);
+    const costs = lookupCosts(p.kind, mid) ?? { in: 0, out: 0 };
     const now = iso();
-    const exists = await this.db.query('SELECT id FROM models WHERE id = ?', [fullId]);
+    const exists = await this.db.query('SELECT id, cost_in_per_mtok FROM models WHERE id = ?', [fullId]);
     if (exists.length === 0) {
       await this.db.run(
         `INSERT INTO models (id, provider_id, family, display_name, capabilities, context_limit,
           cost_in_per_mtok, cost_out_per_mtok, priority, health, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [fullId, p.id, p.id, mid, JSON.stringify(caps), 8192, 0, 0, defaultPriority(caps), 'unknown', now, now],
+        [fullId, p.id, p.id, mid, JSON.stringify(caps), 8192, costs.in, costs.out, defaultPriority(caps), 'unknown', now, now],
       );
     } else {
-      await this.db.run('UPDATE models SET capabilities = ?, updated_at = ? WHERE id = ?', [JSON.stringify(caps), now, fullId]);
+      // only overwrite cost when a real price is known (never zero-out a known price with null)
+      const known = costs.in > 0 || costs.out > 0;
+      await this.db.run(
+        known
+          ? 'UPDATE models SET capabilities = ?, cost_in_per_mtok = ?, cost_out_per_mtok = ?, updated_at = ? WHERE id = ?'
+          : 'UPDATE models SET capabilities = ?, updated_at = ? WHERE id = ?',
+        known
+          ? [JSON.stringify(caps), costs.in, costs.out, now, fullId]
+          : [JSON.stringify(caps), now, fullId],
+      );
     }
   }
 
@@ -147,12 +158,100 @@ export class ModelRouter {
       } catch (e: any) {
         lastErr = e;
         await this.recordFinish(started, null, 'failed', String(e?.message ?? e));
+        if ((e as any)?.aborted) throw e; // cancellation is not a failover condition
         this.healthy.delete(cand.provider_id);
         await this.db.run('UPDATE model_providers SET status = ?, updated_at = ? WHERE id = ?', ['down', iso(), cand.provider_id]);
         continue; // fallback to next candidate
       }
     }
     throw new Error(`All model candidates failed: ${lastErr?.message ?? 'unknown'}`);
+  }
+
+  /** Phase 2: streaming generate. Same fallback semantics as generate(); token
+   *  deltas surface via onToken (volatile — NOT persisted as events); abort
+   *  via signal marks the generation cancelled. */
+  async generateStream(
+    req: ModelRequest,
+    onToken: (delta: string, meta: { model_id: string }) => void,
+    opts: { agent_id?: string | null; execution_id?: string | null; preference?: { provider_id?: string; model_id?: string }[] } = {},
+    signal?: AbortSignal,
+  ): Promise<ModelResponse> {
+    const cands = this.candidates(req.capability, opts.preference);
+    const tryOne = async (cand: RouterModel, started: any): Promise<ModelResponse> => {
+      const provider = this.providers.get(cand.provider_id)!;
+      if (provider.generateStream) {
+        return provider.generateStream(req, cand.model_id, (d) => onToken(d, { model_id: cand.id }), signal);
+      }
+      // provider lacks streaming → single-chunk fallback, still fires onToken once
+      const resp = await provider.generate(req, cand.model_id);
+      if (!signal?.aborted) onToken(resp.text, { model_id: cand.id });
+      return resp;
+    };
+    const run = async (cand: RouterModel): Promise<ModelResponse> => {
+      const started = await this.recordStart(newGenId(), cand, req, opts);
+      try {
+        const resp = await tryOne(cand, started);
+        await this.recordFinish(started, resp, 'completed');
+        return resp;
+      } catch (e: any) {
+        if ((e as any)?.aborted || signal?.aborted) {
+          await this.recordFinish(started, null, 'cancelled', 'aborted by user');
+          throw e;
+        }
+        await this.recordFinish(started, null, 'failed', String(e?.message ?? e));
+        this.healthy.delete(cand.provider_id);
+        await this.db.run('UPDATE model_providers SET status = ?, updated_at = ? WHERE id = ?', ['down', iso(), cand.provider_id]);
+        throw e;
+      }
+    };
+
+    if (cands.length === 0) {
+      const builtin = this.providers.get('builtin')!;
+      const started = await this.recordStart(newGenId(), {
+        id: 'builtin:planner', model_id: 'planner', provider_id: 'builtin',
+        capabilities: [], priority: 0, cost_in: 0, cost_out: 0,
+      } as RouterModel, req, opts);
+      try {
+        const resp = await tryOne({ id: 'builtin:planner', model_id: 'planner', provider_id: 'builtin', capabilities: [], priority: 0, cost_in: 0, cost_out: 0 }, started);
+        await this.recordFinish(started, resp, 'completed');
+        return resp;
+      } catch (e: any) {
+        await this.recordFinish(started, null, (e as any)?.aborted ? 'cancelled' : 'failed', String(e?.message ?? e));
+        throw e;
+      }
+    }
+
+    let lastErr: Error | null = null;
+    for (const cand of cands.slice(0, 4)) {
+      try { return await run(cand); } catch (e: any) {
+        if ((e as any)?.aborted) throw e;
+        lastErr = e;
+      }
+    }
+    throw new Error(`All model candidates failed: ${lastErr?.message ?? 'unknown'}`);
+  }
+
+  /** Phase 2: per-model usage accounting from the generations ledger. */
+  async usage(): Promise<unknown[]> {
+    const rows = await this.db.query<any>(`
+      SELECT model_id, provider_id,
+             COUNT(*) AS generations,
+             SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+             SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+             SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
+             SUM(input_tokens) AS tokens_in,
+             SUM(output_tokens) AS tokens_out,
+             SUM(cost) AS cost,
+             AVG(latency_ms) AS avg_latency_ms
+      FROM generations
+      GROUP BY model_id, provider_id
+      ORDER BY cost DESC`);
+    return rows.map(r => ({
+      ...r,
+      generations: Number(r.generations), completed: Number(r.completed), failed: Number(r.failed), cancelled: Number(r.cancelled),
+      tokens_in: Number(r.tokens_in), tokens_out: Number(r.tokens_out),
+      cost: Number(r.cost), avg_latency_ms: Number(r.avg_latency_ms ?? 0),
+    }));
   }
 
   async refreshHealth(): Promise<void> {
@@ -193,7 +292,7 @@ export class ModelRouter {
     return g;
   }
 
-  private async recordFinish(g: any, resp: ModelResponse | null, status: 'completed' | 'failed', error?: string) {
+  private async recordFinish(g: any, resp: ModelResponse | null, status: 'completed' | 'failed' | 'cancelled', error?: string) {
     const cost = resp
       ? (resp.input_tokens / 1e6) * (await this.costFor(g.model_id, 'in')) +
         (resp.output_tokens / 1e6) * (await this.costFor(g.model_id, 'out'))

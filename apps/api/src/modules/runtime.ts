@@ -24,6 +24,8 @@ type StepOutcome = { ok: true; result: unknown } | { ok: false; error: string };
 
 export class AgentRuntime {
   private control = new Map<string, { pause: boolean; stop: boolean; waiter: ((v: 'approved' | 'denied' | 'timeout') => void) | null }>();
+  /** Phase 2: abort controllers for in-flight generations, per execution. */
+  private aborts = new Map<string, Set<AbortController>>();
 
   constructor(
     private db: DataPort,
@@ -72,6 +74,9 @@ export class AgentRuntime {
       await this.bus.emit('agent.thinking', { execution_id: execId, agent: agent.name, kind: entry.kind, message: entry.message },
         { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
     };
+
+    // Phase 2: throttled volatile token stream → SSE (never persisted)
+    // (class-level helper — see makeTokenPump)
 
     try {
       // 1) CONTEXT RESOLVER — resolve project + task context
@@ -142,6 +147,12 @@ export class AgentRuntime {
 
         const outcome = await this.executeStep(step, opts, execId, ctx, trace, observations, i);
         if (!outcome.ok) {
+          // Phase 2: a user-initiated abort mid-generation surfaces as 'aborted' —
+          // that is a CANCELLATION, not a failure.
+          if (this.control.get(execId)?.stop || /abort/i.test(outcome.error)) {
+            await this.finish(execId, 'cancelled', null, 'Stopped by user', agent);
+            return;
+          }
           // failure recovery: notify + fail execution (retry policy per-step could hook here)
           await store.notify(this.db, {
             user_id: opts.user_id, title: `Agent ${agent.name} failed`, message: outcome.error.slice(0, 300),
@@ -154,20 +165,31 @@ export class AgentRuntime {
         await persist();
       }
 
-      // 5) RESULT — final synthesis
-      const finalResp = await this.router.generate(
-        {
-          capability: 'writing', system: agent.system_instructions || 'You are an agent in the Agentic OS. Summarize what you did clearly and concisely.',
-          prompt: [
-            `Original request: ${input}`,
-            `Plan rationale: ${plan.rationale}`,
-            `Observations:`,
-            ...observations.map((o, n) => `${n + 1}. [${o.source}] ${JSON.stringify(o.data).slice(0, 500)}`),
-            `Write the final answer for the user: what was done, what was created, ids if any.`,
-          ].join('\n'),
-        },
-        { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
-      );
+      // 5) RESULT — final synthesis (streamed live to the UI)
+      const synthPump = this.makeTokenPump(execId, agent, 'synthesis');
+      const synthCtl = new AbortController();
+      this.trackAbort(execId, synthCtl);
+      let finalResp;
+      try {
+        finalResp = await this.router.generateStream(
+          {
+            capability: 'writing', system: agent.system_instructions || 'You are an agent in the Agentic OS. Summarize what you did clearly and concisely.',
+            prompt: [
+              `Original request: ${input}`,
+              `Plan rationale: ${plan.rationale}`,
+              `Observations:`,
+              ...observations.map((o, n) => `${n + 1}. [${o.source}] ${JSON.stringify(o.data).slice(0, 500)}`),
+              `Write the final answer for the user: what was done, what was created, ids if any.`,
+            ].join('\n'),
+          },
+          async (d) => { await synthPump.push(d); },
+          { agent_id: agent.id, execution_id: execId, preference: agent.model_policy.preference },
+          synthCtl.signal,
+        );
+      } finally {
+        this.untrackAbort(execId, synthCtl);
+        await synthPump.end();
+      }
       const result = finalResp.text;
       push({ ts: iso(), kind: 'result', message: result.slice(0, 300), data: { model: finalResp.model_id } });
 
@@ -189,7 +211,10 @@ export class AgentRuntime {
 
       await this.finish(execId, 'completed', result, null, agent);
     } catch (e: any) {
-      await this.finish(execId, 'failed', null, String(e?.message ?? e), agent);
+      const msg = String(e?.message ?? e);
+      // user-initiated abort → cancellation semantics, not failure
+      const cancelled = (e as any)?.aborted || this.control.get(execId)?.stop || /abort/i.test(msg);
+      await this.finish(execId, cancelled ? 'cancelled' : 'failed', null, cancelled ? 'Stopped by user' : msg, agent);
     }
   }
 
@@ -199,10 +224,21 @@ export class AgentRuntime {
     execId: string, ctx: ToolContext, trace: TraceEntry[], observations: Observation[], stepIndex: number,
   ): Promise<StepOutcome> {
     if (step.kind === 'model') {
-      const resp = await this.router.generate(
-        { capability: step.capability ?? 'reasoning', system: ctx.agent.system_instructions, prompt: step.prompt || opts.input, hint: observations.length ? observations.slice(-3) : undefined },
-        { agent_id: ctx.agent.id, execution_id: execId, preference: ctx.agent.model_policy.preference },
-      );
+      const pump = this.makeTokenPump(execId, ctx.agent, `model:${step.capability ?? 'reasoning'}`);
+      const ctl = new AbortController();
+      this.trackAbort(execId, ctl);
+      let resp;
+      try {
+        resp = await this.router.generateStream(
+          { capability: step.capability ?? 'reasoning', system: ctx.agent.system_instructions, prompt: step.prompt || opts.input, hint: observations.length ? observations.slice(-3) : undefined },
+          async (d) => { await pump.push(d); },
+          { agent_id: ctx.agent.id, execution_id: execId, preference: ctx.agent.model_policy.preference },
+          ctl.signal,
+        );
+      } finally {
+        this.untrackAbort(execId, ctl);
+        await pump.end();
+      }
       trace.push({ ts: iso(), kind: 'model', message: `Model ${resp.model_id}: ${resp.text.slice(0, 160)}`, data: { model: resp.model_id, tokens: resp.output_tokens } });
       return { ok: true, result: { text: resp.text, model: resp.model_id } };
     }
@@ -314,6 +350,41 @@ export class AgentRuntime {
   }
 
   // ─── controls ──────────────────────────────────────────────────────────────
+  /** Phase 2: throttled volatile token pump — batches token deltas into
+   *  agent.token SSE events (≥24 chars or 120ms) without persisting. */
+  private makeTokenPump(execId: string, agent: AgentRecord, label: string) {
+    let buf = '';
+    let lastFlush = 0;
+    const flush = async () => {
+      if (!buf) return;
+      const out = buf; buf = '';
+      lastFlush = Date.now();
+      await this.bus.emitVolatile('agent.token', { execution_id: execId, agent: agent.name, phase: label, delta: out },
+        { actor_type: 'agent', actor_id: agent.id }).catch(() => {});
+    };
+    return {
+      push: async (delta: string) => {
+        buf += delta;
+        if (buf.length >= 24 || Date.now() - lastFlush > 120) await flush();
+      },
+      end: flush,
+    };
+  }
+
+  /** Phase 2: register/unregister in-flight generation aborts for an execution. */
+  private trackAbort(execId: string, ctl: AbortController): void {
+    if (!this.aborts.has(execId)) this.aborts.set(execId, new Set());
+    this.aborts.get(execId)!.add(ctl);
+  }
+  private untrackAbort(execId: string, ctl: AbortController): void {
+    this.aborts.get(execId)?.delete(ctl);
+  }
+  /** Abort all in-flight generations for an execution (used by stop()). */
+  private abortAll(execId: string): void {
+    for (const ctl of this.aborts.get(execId) ?? []) { try { ctl.abort(); } catch { /* already */ } }
+    this.aborts.delete(execId);
+  }
+
   async pause(execId: string): Promise<boolean> {
     const ex = await store.getExecution(this.db, execId);
     if (!ex || !['running', 'approval_required'].includes(ex.status)) return false;
@@ -339,6 +410,7 @@ export class AgentRuntime {
     if (!ex || ['completed', 'failed', 'cancelled'].includes(ex.status)) return false;
     const ctl = this.control.get(execId);
     if (ctl) { ctl.stop = true; ctl.pause = false; ctl.waiter?.('denied'); }
+    this.abortAll(execId); // Phase 2: kill in-flight generations immediately
     return true;
   }
 

@@ -11,7 +11,7 @@ import { createBroker } from './infra/broker';
 import { runMigrations } from './infra/migrations';
 import { EventBus } from './kernel/bus';
 import { ModelRouter } from './gateway/router';
-import { BuiltinProvider, OpenAICompatProvider, OllamaProvider } from './gateway/providers';
+import { BuiltinProvider, OpenAICompatProvider, OllamaProvider, GeminiProvider } from './gateway/providers';
 import { ToolRegistry, createBuiltinTools } from './modules/tools';
 import { AgentRuntime } from './modules/runtime';
 import { buildApi } from './app';
@@ -49,6 +49,10 @@ async function main() {
   if (config.ollama.baseUrl) {
     router.register(new OllamaProvider(config.ollama.baseUrl));
     console.log(`[boot] model gateway: ollama @ ${config.ollama.baseUrl}`);
+  }
+  if (config.gemini.apiKey) {
+    router.register(new GeminiProvider(config.gemini.apiKey, config.gemini.baseUrl, config.gemini.models));
+    console.log(`[boot] model gateway: gemini${config.gemini.models.length ? ` (filter: ${config.gemini.models.join(', ')})` : ' (auto-discover)'}`);
   }
   const boot = await router.bootstrap();
   console.log(`[boot] providers: ${boot.providers.map((p: any) => `${p.id}=${p.status}(${p.models})`).join(' ')}`);

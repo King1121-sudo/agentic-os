@@ -14,7 +14,7 @@ import type { ModelProviderPort, ModelRequest, ModelResponse } from '../kernel/t
 import type { Plan } from '@agentic/contracts';
 import { PlanSchema } from '@agentic/contracts';
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ─── shared fetch/stream helpers ────────────────────────────────────────────
 async function fetchJson(url: string, init: RequestInit, timeoutMs = 60000): Promise<any> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
@@ -26,6 +26,45 @@ async function fetchJson(url: string, init: RequestInit, timeoutMs = 60000): Pro
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
     return json;
   } finally { clearTimeout(t); }
+}
+
+/** Read an SSE/http-stream body, invoking onJson for each parsed JSON chunk. Honors an external abort signal. */
+async function readChunks(
+  res: { body: any },
+  extract: (chunkJson: any) => string | null,
+  onChunk: (rawLine: string) => void,
+  signal?: AbortSignal,
+  lineSplit: 'sse' | 'nl' = 'sse',
+): Promise<void> {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const onAbort = () => { try { reader.cancel(); } catch { /* already closed */ } };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split(lineSplit === 'nl' ? '\n' : '\n\n');
+      buf = parts.pop() ?? '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line) continue;
+        if (lineSplit === 'sse') {
+          if (!line.startsWith('data:')) continue; // skip event:/comment lines
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') return;
+          try { const delta = extract(JSON.parse(payload)); if (delta) onChunk(delta); } catch { /* partial */ }
+        } else {
+          try { const delta = extract(JSON.parse(line)); if (delta) onChunk(delta); } catch { /* partial */ }
+        }
+      }
+      if (signal?.aborted) return;
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 export function estimateTokens(s: string): number {
@@ -76,6 +115,19 @@ export class BuiltinProvider implements ModelProviderPort {
       input_tokens: inTok, output_tokens: estimateTokens(text),
       latency_ms: Date.now() - t0,
     };
+  }
+
+  /** Phase 2: word-by-word deterministic streaming so the entire stream path
+   *  (SSE → UI) is exercisable with zero external dependencies. */
+  async generateStream(req: ModelRequest, model_id: string, onToken: (delta: string) => void, signal?: AbortSignal): Promise<ModelResponse> {
+    const base = await this.generate(req, model_id);
+    if (signal?.aborted) throw abortErr();
+    for (const word of base.text.split(/(?<=\s)/)) {
+      if (signal?.aborted) throw abortErr();
+      onToken(word);
+      await sleep(12); // visible cadence for live UI
+    }
+    return base;
   }
 }
 
@@ -278,6 +330,41 @@ export class OpenAICompatProvider implements ModelProviderPort {
       latency_ms: Date.now() - t0,
     };
   }
+
+  /** Phase 2: SSE streaming via /chat/completions stream:true. */
+  async generateStream(req: ModelRequest, model_id: string, onToken: (delta: string) => void, signal?: AbortSignal): Promise<ModelResponse> {
+    const t0 = Date.now();
+    const body: Record<string, unknown> = {
+      model: model_id.replace(/^openai-compat:/, ''),
+      stream: true,
+      stream_options: { include_usage: true },
+      messages: [
+        ...(req.system ? [{ role: 'system', content: req.system }] : []),
+        { role: 'user', content: req.prompt },
+      ],
+      temperature: req.temperature ?? (req.capability === 'planning' ? 0.1 : 0.4),
+      max_tokens: req.max_tokens ?? 1024,
+    };
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    let full = ''; let model = model_id; let usage: any = null;
+    await readChunks(res, (j) => {
+      if (j?.usage) usage = j.usage;
+      if (j?.model) model = j.model;
+      return j?.choices?.[0]?.delta?.content ?? null;
+    }, (delta) => { full += delta; onToken(delta); }, signal);
+    if (signal?.aborted) throw abortErr();
+    return {
+      text: full,
+      plan: req.capability === 'planning' ? (parsePlanFromText(full) ?? undefined) : undefined,
+      model_id: `openai-compat:${model}`, provider_id: this.id,
+      input_tokens: usage?.prompt_tokens ?? estimateTokens(req.prompt),
+      output_tokens: usage?.completion_tokens ?? estimateTokens(full),
+      latency_ms: Date.now() - t0,
+    };
+  }
 }
 
 // ─── Ollama provider ────────────────────────────────────────────────────────
@@ -320,9 +407,133 @@ export class OllamaProvider implements ModelProviderPort {
       latency_ms: Date.now() - t0,
     };
   }
+
+  /** Phase 2: ndjson streaming via /api/chat stream:true. */
+  async generateStream(req: ModelRequest, model_id: string, onToken: (delta: string) => void, signal?: AbortSignal): Promise<ModelResponse> {
+    const t0 = Date.now();
+    const body = {
+      model: model_id.replace(/^ollama:/, ''),
+      stream: true,
+      messages: [
+        ...(req.system ? [{ role: 'system', content: req.system }] : []),
+        { role: 'user', content: req.prompt + (req.capability === 'planning' ? '\n\nRespond ONLY with a JSON object: {"rationale": "...", "steps": [{"kind": "tool", "tool": "...", "args": {...}} | {"kind": "model", "capability": "reasoning|writing|chat", "prompt": "..."}]}. Available tools: ' + PLANNER_TOOLS : '') },
+      ],
+      options: { temperature: req.temperature ?? (req.capability === 'planning' ? 0.1 : 0.4), num_predict: req.max_tokens ?? 1024 },
+    };
+    const res = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    let full = ''; let inTok = 0; let outTok = 0;
+    await readChunks(res, (j) => {
+      if (j?.prompt_eval_count) inTok = j.prompt_eval_count;
+      if (j?.eval_count) outTok = j.eval_count;
+      return j?.message?.content ?? null;
+    }, (delta) => { full += delta; onToken(delta); }, signal, 'nl');
+    if (signal?.aborted) throw abortErr();
+    return {
+      text: full,
+      plan: req.capability === 'planning' ? (parsePlanFromText(full) ?? undefined) : undefined,
+      model_id: `ollama:${body.model}`, provider_id: this.id,
+      input_tokens: inTok || estimateTokens(req.prompt),
+      output_tokens: outTok || estimateTokens(full),
+      latency_ms: Date.now() - t0,
+    };
+  }
+}
+
+// ─── Gemini provider (Generative Language API) ─────────────────────────────
+export class GeminiProvider implements ModelProviderPort {
+  id = 'gemini';
+  name = 'Google Gemini';
+  kind = 'gemini' as const;
+
+  constructor(private apiKey: string, private baseUrl: string = 'https://generativelanguage.googleapis.com', private modelFilter: string[] = []) {}
+
+  private url(method: string, model: string, extra = ''): string {
+    return `${this.baseUrl}/v1beta/models/${model}:${method}?key=${this.apiKey}${extra}`;
+  }
+
+  async healthy(): Promise<boolean> {
+    // Only a genuinely successful call counts as healthy — auth errors (400/401/403),
+    // bad model ids (404) and network failures are all "down" for routing purposes.
+    // Minimal VALID body (empty {} would 400 and false-negative a good key).
+    const probe = JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] });
+    try { await fetchJson(this.url('generateContent', 'gemini-2.0-flash'), { method: 'POST', headers: this.headers(), body: probe }, 8000); return true; }
+    catch { return false; }
+  }
+
+  private headers(): Record<string, string> { return { 'Content-Type': 'application/json' }; }
+
+  async listModels(): Promise<string[]> {
+    const r = await fetchJson(`${this.baseUrl}/v1beta/models?key=${this.apiKey}&pageSize=100`, { method: 'GET' }, 10000);
+    const models: string[] = (r?.models ?? [])
+      .map((m: any) => String(m?.name ?? '').replace(/^models\//, ''))
+      .filter((n: string) => /^gemini-\d/.test(n) && !/embedding|aqa|image|tts|vision-only/i.test(n));
+    const filtered = this.modelFilter.length ? models.filter(m => this.modelFilter.some(f => m.includes(f))) : models;
+    return filtered.slice(0, 30);
+  }
+
+  private body(req: ModelRequest): string {
+    return JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+      ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
+      generationConfig: {
+        temperature: req.temperature ?? (req.capability === 'planning' ? 0.1 : 0.4),
+        maxOutputTokens: req.max_tokens ?? 1024,
+      },
+    });
+  }
+
+  async generate(req: ModelRequest, model_id: string): Promise<ModelResponse> {
+    const t0 = Date.now();
+    const mid = model_id.replace(/^gemini:/, '');
+    const r = await fetchJson(this.url('generateContent', mid), { method: 'POST', headers: this.headers(), body: this.body(req) }, 60000);
+    const text = (r?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('');
+    const usage = r?.usageMetadata ?? {};
+    return {
+      text,
+      plan: req.capability === 'planning' ? (parsePlanFromText(text) ?? undefined) : undefined,
+      model_id: `gemini:${mid}`, provider_id: this.id,
+      input_tokens: usage.promptTokenCount ?? estimateTokens(req.prompt),
+      output_tokens: usage.candidatesTokenCount ?? estimateTokens(text),
+      latency_ms: Date.now() - t0,
+    };
+  }
+
+  /** Phase 2: SSE streaming via streamGenerateContent?alt=sse. */
+  async generateStream(req: ModelRequest, model_id: string, onToken: (delta: string) => void, signal?: AbortSignal): Promise<ModelResponse> {
+    const t0 = Date.now();
+    const mid = model_id.replace(/^gemini:/, '');
+    const res = await fetch(this.url('streamGenerateContent', mid, '&alt=sse'), {
+      method: 'POST', headers: this.headers(), body: this.body(req), signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    let full = ''; let usage: any = null;
+    await readChunks(res, (j) => {
+      if (j?.usageMetadata) usage = j.usageMetadata;
+      return (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('') || null;
+    }, (delta) => { full += delta; onToken(delta); }, signal);
+    if (signal?.aborted) throw abortErr();
+    return {
+      text: full,
+      plan: req.capability === 'planning' ? (parsePlanFromText(full) ?? undefined) : undefined,
+      model_id: `gemini:${mid}`, provider_id: this.id,
+      input_tokens: usage?.promptTokenCount ?? estimateTokens(req.prompt),
+      output_tokens: usage?.candidatesTokenCount ?? estimateTokens(full),
+      latency_ms: Date.now() - t0,
+    };
+  }
 }
 
 export const PLANNER_TOOLS = [
   'memory.write', 'memory.search', 'task.create', 'task.update', 'task.list',
   'project.create', 'http.fetch', 'file.write', 'shell.run', 'notify', 'calc.eval',
 ];
+
+export function abortErr(): Error {
+  const e = new Error('aborted');
+  (e as any).aborted = true;
+  return e;
+}
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }

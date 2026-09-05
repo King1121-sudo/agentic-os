@@ -22,19 +22,24 @@ Per §44 of the build spec:
 - [x] Vitest suite (memory, planner, gate, router, adapter, auth)
 
 **ADR note:** the spec asked for NestJS. We shipped Fastify + the same module/port
-structure because the kernel's complexity lives in the runtime/gateway/memory
+structure because the kernel's compl    exity lives in the runtime/gateway/memory
 subsystems, not the HTTP layer, and Fastify keeps the dependency surface tiny
 (one process, zero native deps in default mode). The API is a thin, typed
 boundary over the same service layer a NestJS wrapper would expose — swapping
 the HTTP shell later is mechanical if needed.
 
-## Phase 2 — Model Gateway hardening (next)
-- token accounting per provider, cost tables for hosted models
-- Gemini provider adapter
-- streaming SSE responses to the UI, generation cancellation
-- capability-based routing tests against real providers
+## Phase 2 — Model Gateway hardening ✅ (v0.2.0)
 
-## Phase 3 — Agent runtime maturation
+- [x] Streaming generation on ALL providers (`generateStream` on the port; openai-compat SSE, ollama ndjson, gemini SSE, builtin word-cadence for zero-dep testing)
+- [x] Live token streaming to the UI: throttled volatile `agent.token` events (never persisted) → SSE → trace viewer streaming panel with mid-run Stop
+- [x] Cancellation: Stop → AbortController → in-flight generation marked `cancelled` (not failed); execution → `cancelled`
+- [x] Router `generateStream` with per-candidate fallback (same semantics as `generate`)
+- [x] Gemini provider adapter (`v1beta generateContent` / `streamGenerateContent?alt=sse`, model auto-discovery, valid-body health probe)
+- [x] Cost registry: published list prices seeded into models at registration (ordered patterns so gpt-4o-mini ≠ gpt-4o)
+- [x] Usage accounting: `GET /api/models/usage` (gens, ✓/✗/⊘, tokens, cost, avg latency) + Settings → Model Usage table
+- [x] Phase 2 test suite (streaming reconstruction, abort→cancelled, cost lookup, usage aggregation, gemini body/health) — 25/25 green
+
+## Phase 3 — Agent runtime maturation (next)
 - subagent delegation (execution graph, parent_execution_id already in schema)
 - retry/backoff policy per step, checkpoint resume across process restarts
 - agent-to-agent messaging, planner→specialist routing in the command center

@@ -5,6 +5,7 @@ import { api, usePoll } from '@/lib/api';
 export default function SettingsPage() {
   const health = usePoll(() => api('/api/health'), 5000);
   const models = usePoll(() => api('/api/models'), 8000);
+  const usage = usePoll(() => api('/api/models/usage'), 8000);
   const me = usePoll(() => api('/api/auth/me'), 30000);
 
   return (
@@ -45,6 +46,34 @@ export default function SettingsPage() {
           <div className="xs faint" style={{ marginTop: 8 }}>
             Add models via .env: OPENAI_BASE_URL + OPENAI_API_KEY (any OpenAI-compatible API) or OLLAMA_BASE_URL. The router health-checks and picks per capability with automatic fallback.
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 14 }}>
+        <h3>Model Usage <span className="count">per model · from the generations ledger</span></h3>
+        <table className="tbl">
+          <thead><tr><th>Model</th><th>Provider</th><th>Gens</th><th>✓/✗/⊘</th><th>Tokens (in+out)</th><th>Cost $</th><th>Avg latency</th></tr></thead>
+          <tbody>
+            {(usage ?? []).map((u: any) => (
+              <tr key={u.model_id}>
+                <td className="mono xs">{u.model_id}</td>
+                <td className="xs">{u.provider_id}</td>
+                <td className="xs mono">{u.generations}</td>
+                <td className="xs mono">
+                  <span style={{ color: 'var(--green)' }}>{u.completed}</span>/
+                  <span style={{ color: 'var(--red)' }}>{u.failed}</span>/
+                  <span style={{ color: 'var(--fg-faint)' }}>{u.cancelled}</span>
+                </td>
+                <td className="xs mono">{u.tokens_in}+{u.tokens_out}</td>
+                <td className="xs mono">{u.cost > 0 ? u.cost.toFixed(5) : '—'}</td>
+                <td className="xs mono">{Math.round(u.avg_latency_ms)}ms</td>
+              </tr>
+            ))}
+            {(usage ?? []).length === 0 && <tr><td colSpan={7} className="empty">No generations yet.</td></tr>}
+          </tbody>
+        </table>
+        <div className="xs faint" style={{ marginTop: 8 }}>
+          Costs use published list prices (approximation for tracking, not billing). Local/builtin models cost $0. Set OPENAI_*/GEMINI_*/OLLAMA_* in .env to add priced providers.
         </div>
       </div>
 

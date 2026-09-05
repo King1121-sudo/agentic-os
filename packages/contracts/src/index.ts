@@ -25,7 +25,7 @@ export type TaskStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'archived
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 export type ProjectStatus = 'active' | 'archived';
 export type SprintStatus = 'planned' | 'active' | 'completed' | 'cancelled';
-export type GenerationStatus = 'started' | 'completed' | 'failed';
+export type GenerationStatus = 'started' | 'completed' | 'failed' | 'cancelled';
 export type ApprovalStatus = 'pending' | 'approved' | 'denied' | 'timeout';
 export type NotificationStatus = 'unread' | 'read';
 export type EntityKind =
@@ -51,7 +51,8 @@ export type EventType =
   | 'task.completed' | 'sprint.started' | 'sprint.completed'
   | 'generation.started' | 'generation.completed' | 'generation.failed'
   | 'notification.created' | 'link.created' | 'integration.event'
-  | 'user.login' | 'user.logout' | 'system.ready';
+  | 'user.login' | 'user.logout' | 'system.ready'
+  | 'agent.token' | 'generation.cancelled';
 
 export interface OsEvent {
   id: Uuid;

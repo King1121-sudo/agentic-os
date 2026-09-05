@@ -26,9 +26,14 @@ export const config = {
     apiKey: process.env.OPENAI_API_KEY ?? '',
     models: (process.env.OPENAI_MODELS ?? 'gpt-4o-mini,gpt-4o').split(',').map(s => s.trim()).filter(Boolean),
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY ?? '',
+    baseUrl: process.env.GEMINI_BASE_URL ?? 'https://generativelanguage.googleapis.com',
+    models: (process.env.GEMINI_MODELS ?? '').split(',').map(s => s.trim()).filter(Boolean),
+  },
   ollama: { baseUrl: process.env.OLLAMA_BASE_URL ?? '' },
   approvalTimeoutS: num(process.env.APPROVAL_TIMEOUT_S, 300),
   seedAdmin: { username: str(process.env.SEED_ADMIN_USER, 'admin'), password: str(process.env.SEED_ADMIN_PASSWORD, 'admin123') },
   allowShell: str(process.env.AGENTIC_ALLOW_SHELL, '0') === '1',
-  version: '0.1.0',
+  version: '0.2.0',
 };

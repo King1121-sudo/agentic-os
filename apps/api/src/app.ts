@@ -193,6 +193,7 @@ export function buildApi(deps: ApiDeps) {
     providers: router.listProviders(),
     models: await router.listModels(),
   }));
+  app.get('/api/models/usage', async () => router.usage());
 
   // ─── tools & skills ───────────────────────────────────────────────────────
   app.get('/api/tools', async () => tools.list().map(t => ({
@@ -439,6 +440,9 @@ export function buildApi(deps: ApiDeps) {
 
     const unsub = await broker.subscribe(CHANNEL, (_ch, payload) => {
       const ev = payload as any;
+      // Volatile token events bypass the cursor (they are never persisted) —
+      // send them straight through so streaming feels live on every panel.
+      if (ev?.type === 'agent.token') { reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`); return; }
       if (ev?.created_at && ev.created_at > last) {
         reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
         last = ev.created_at;

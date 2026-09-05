@@ -51,7 +51,8 @@ The Model Router health-probes providers at boot + every 60s, picks models by ca
 | OS shell (Next.js, dark/light, ⌘K palette, SSE live feed) | ✅ live | `apps/web` |
 | Kernel pipeline (context → memory → plan → execute → result → memory → event → notify) | ✅ live | `modules/runtime.ts` |
 | Event bus (23 event types, persisted + broadcast) | ✅ live | `kernel/bus.ts` |
-| Model Gateway (3 provider adapters + router w/ fallback, health, capability routing) | ✅ live | `gateway/*` |
+| Model Gateway (4 provider adapters incl. Gemini, streaming + cancellation, health + capability routing, fallback) | ✅ live | `gateway/*` |
+| Usage & cost accounting (list-price registry, per-model ledger, Settings → Model Usage) | ✅ live | `gateway/costs.ts`, `/api/models/usage` |
 | Agent Runtime (states, pause/resume/stop, approval gates, tracing, checkpointing) | ✅ live | `modules/runtime.ts` |
 | Memory Engine (7 types, composite scoring, dedup, decay, consolidation) | ✅ live | `modules/memory.ts` |
 | Tool Runtime (12 tools, risk classes, permission scopes, sandboxed files) | ✅ live | `modules/tools.ts` |
