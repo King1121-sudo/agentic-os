@@ -10,6 +10,7 @@ import * as path from 'path';
 import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
 import { createMemory, searchMemory, decayMemories, consolidateMemories, embed, cosine } from '../modules/memory';
+import * as store from '../modules/store';
 import { heuristicPlan } from '../gateway/providers';
 import { evaluateGate } from '../kernel/types';
 import { hashPassword, verifyPassword } from '../auth.util';
@@ -138,6 +139,26 @@ describe('model router fallback', () => {
     expect(resp.plan).toBeDefined();
     expect(resp.plan!.steps.length).toBeGreaterThan(0);
     expect(resp.provider_id).toBe('builtin');
+  });
+});
+
+describe('project lookup hardening (post-audit fix)', () => {
+  it('findProjectByName: exact match wins, substring fallback finds shorter existing name', async () => {
+    await store.createProject(db, { name: 'Aurora', created_by: 'u1' });
+    await store.createProject(db, { name: 'Agentic OS', created_by: 'u1' });
+    // exact
+    const exact = await store.findProjectByName(db, 'Aurora');
+    expect(exact!.name).toBe('Aurora');
+    // query longer than name ("aurora project" should match existing "Aurora")
+    const longer = await store.findProjectByName(db, 'the Aurora project');
+    expect(longer!.name).toBe('Aurora');
+    // case/whitespace normalization
+    const messy = await store.findProjectByName(db, '  AGENtic  os ');
+    expect(messy!.name).toBe('Agentic OS');
+    // longest existing name wins when multiple substring candidates
+    await store.createProject(db, { name: 'Agentic OS v2 beta', created_by: 'u1' });
+    const longest = await store.findProjectByName(db, 'the Agentic OS v2 beta roadmap');
+    expect(longest!.name).toBe('Agentic OS v2 beta');
   });
 });
 

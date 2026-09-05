@@ -115,9 +115,16 @@ export async function getProject(db: DataPort, id: string): Promise<ProjectRecor
   return rows[0] ?? null;
 }
 export async function findProjectByName(db: DataPort, q: string): Promise<ProjectRecord | null> {
-  const rows = await db.query<any>(
-    'SELECT * FROM projects WHERE LOWER(name) LIKE ? ORDER BY created_at DESC LIMIT 1', [`%${q.toLowerCase()}%`]);
-  return rows[0] ?? null;
+  const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
+  const target = norm(q);
+  const all = await db.query<any>('SELECT * FROM projects ORDER BY created_at DESC');
+  // exact name match first
+  let hit = all.find(p => norm(p.name) === target);
+  if (hit) return hit;
+  // then substring, longest existing-name match wins (prevents "Aurora project" missing "Aurora")
+  const substr = all.filter(p => target.includes(norm(p.name)) || norm(p.name).includes(target))
+    .sort((a, b) => b.name.length - a.name.length);
+  return substr[0] ?? null;
 }
 
 export async function createTask(db: DataPort, t: Partial<TaskRecord> & { title: string }): Promise<TaskRecord> {

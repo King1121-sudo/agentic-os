@@ -18,7 +18,7 @@ import { buildApi } from './app';
 import { seed } from './seed';
 
 async function main() {
-  console.log('[boot] Agentic OS Kernel v0.1 starting…');
+  console.log(`[boot] Agentic OS Kernel v${config.version} starting…`);
 
   // 1) DATA LAYER
   const db = config.databaseUrl

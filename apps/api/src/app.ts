@@ -520,9 +520,14 @@ export function buildApi(deps: ApiDeps) {
 
     // explicit sprint creation (§22)
     if (/\b(create|make|start|prepare)\b.*\bsprint\b/.test(t)) {
-      const projMatch = text.match(/for\s+(?:the\s+)?["“']?([A-Za-z0-9 _-]+)["”']?\s*$/i) ?? text.match(/\bsprint for\s+([A-Za-z0-9 _-]+)/i);
-      let project = projMatch ? await store.findProjectByName(db, projMatch[1].trim()) : (await store.listProjects(db))[0];
-      if (!project) project = await store.createProject(db, { name: projMatch?.[1]?.trim() ?? 'General', created_by: user.id });
+      const projMatch = text.match(/for\s+(?:the\s+)?["“']?([A-Za-z0-9 _-]+?)["”']?\s*(?:project|workspace)?\s*$/i)
+        ?? text.match(/\bsprint for\s+([A-Za-z0-9 _-]+)/i);
+      // normalize: strip a trailing "project"/"workspace" word so "for the Aurora project"
+      // captures "Aurora", not "Aurora project" (which would miss the existing project)
+      let rawName = projMatch?.[1]?.trim() ?? '';
+      rawName = rawName.replace(/\s+(project|workspace)$/i, '').trim();
+      let project = rawName ? await store.findProjectByName(db, rawName) : (await store.listProjects(db))[0];
+      if (!project) project = await store.createProject(db, { name: rawName || 'General', created_by: user.id });
       const sprint = await store.createSprint(db, {
         project_id: project.id, name: `Sprint: ${project.name}`, objective: text.slice(0, 200),
       });
