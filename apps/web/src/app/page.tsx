@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api, post, usePoll, patch } from '@/lib/api';
 import type { AgentRecord, TaskRecord, ProjectRecord, NotificationRecord, OsEvent } from '@agentic/contracts';
+import { JarvisCockpitDashboard } from '@/components/jarvis/JarvisCockpitDashboard';
 
 /** Dashboard wire shape (GET /api/dashboard). */
 interface DashboardData {
@@ -29,6 +30,9 @@ export default function Home() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Widget[] | null>(null);
   const [prefsMsg, setPrefsMsg] = useState('');
+  const [cockpit, setCockpit] = useState(true);
+  useEffect(() => { const saved = localStorage.getItem('jarvis-cockpit'); if (saved === 'off') setCockpit(false); }, []);
+  const toggleCockpit = () => { setCockpit(c => { localStorage.setItem('jarvis-cockpit', c ? 'off' : 'on'); return !c; }); };
 
   const layout = draft ?? layoutData?.layout?.widgets ?? [];
   const registry: WidgetDef[] = layoutData?.registry ?? [];
@@ -105,6 +109,7 @@ export default function Home() {
           </div>
         </div>
         <div className="row">
+          <button onClick={toggleCockpit} title="Toggle JARVIS cockpit view">{cockpit ? '▼ Classic dashboard' : '▲ JARVIS cockpit'}</button>
           {editing ? (
             <>
               <select onChange={e => { if (e.target.value) addWidget(e.target.value); e.target.value = ''; }} defaultValue="">
@@ -121,30 +126,49 @@ export default function Home() {
         </div>
       </div>
 
-      {editing && (
-        <div className="xs faint" style={{ marginBottom: 10 }}>
-          Add widgets, reorder with ↑↓, cycle widths with ⇔ (1/3, 2/3, full row). Layout persists per user.
-        </div>
+      {cockpit && (
+        <JarvisCockpitDashboard
+          d={d}
+          health={health}
+          approvals={approvals}
+          autos={autos}
+          openTasks={openTasks}
+          agents={agents}
+          projects={projects}
+          notes={notes}
+          events={events}
+          counts={counts}
+        />
       )}
 
-      {rows.map((r, ri) => (
-        <div key={ri} className="grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, r.reduce((s, w) => s + w.width, 0))}, 1fr)`, gap: 14, marginBottom: 14 }}>
-          {r.map(w => (
-            <div key={w.id} style={{ gridColumn: `span ${w.width}` }}>
-              {editing && (
-                <div className="row xs" style={{ gap: 4, marginBottom: 4 }}>
-                  <button className="xs ghost" onClick={() => move(w.id, -1)}>↑</button>
-                  <button className="xs ghost" onClick={() => move(w.id, 1)}>↓</button>
-                  <button className="xs ghost" onClick={() => cycleWidth(w.id)}>⇔ {w.width}/3</button>
-                  <button className="xs ghost" onClick={() => removeWidget(w.id)}>✕</button>
+      {!cockpit && (
+        <>
+          {editing && (
+            <div className="xs faint" style={{ marginBottom: 10 }}>
+              Add widgets, reorder with ↑↓, cycle widths with ⇔ (1/3, 2/3, full row). Layout persists per user.
+            </div>
+          )}
+
+          {rows.map((r, ri) => (
+            <div key={ri} className="grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, r.reduce((s, w) => s + w.width, 0))}, 1fr)`, gap: 14, marginBottom: 14 }}>
+              {r.map(w => (
+                <div key={w.id} style={{ gridColumn: `span ${w.width}` }}>
+                  {editing && (
+                    <div className="row xs" style={{ gap: 4, marginBottom: 4 }}>
+                      <button className="xs ghost" onClick={() => move(w.id, -1)}>↑</button>
+                      <button className="xs ghost" onClick={() => move(w.id, 1)}>↓</button>
+                      <button className="xs ghost" onClick={() => cycleWidth(w.id)}>⇔ {w.width}/3</button>
+                      <button className="xs ghost" onClick={() => removeWidget(w.id)}>✕</button>
+                    </div>
+                  )}
+                  <WidgetCard kind={w.kind} {...widgetProps} />
                 </div>
-              )}
-              <WidgetCard kind={w.kind} {...widgetProps} />
+              ))}
             </div>
           ))}
-        </div>
-      ))}
-      {layout.length === 0 && <div className="empty">Dashboard is empty — add widgets with ⚙ Edit dashboard.</div>}
+          {layout.length === 0 && <div className="empty">Dashboard is empty — add widgets with ⚙ Edit dashboard.</div>}
+        </>
+      )}
     </Shell>
   );
 }

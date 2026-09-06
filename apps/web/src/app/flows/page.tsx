@@ -80,7 +80,7 @@ export default function FlowsPage() {
   const activeRunLive = usePoll(() => activeRun ? api(`/api/flow-runs/${activeRun.id}`) : Promise.resolve(null), 2000, [activeRun?.id]) as any | null;
 
   // ── builder canvas state ──
-  const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodes, setNodes] = useState<Node<Record<string, unknown>>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [name, setName] = useState('New Flow');
   const [editingId, setEditingId] = useState<string | null>(null); // selected node id
@@ -129,14 +129,14 @@ export default function FlowsPage() {
     if (!editingId) return;
     setNodes(ns => ns.map(n => {
       if (n.id !== editingId) return n;
-      const config = { ...(n.data.config ?? {}) };
+      const config: Record<string, unknown> = { ...((n.data.config as Record<string, unknown> | undefined) ?? {}) };
       // try JSON for structured fields
       if (['defaults', 'args'].includes(key)) {
         try { config[key] = value ? JSON.parse(value) : {}; } catch { config[key] = value; }
       } else {
         config[key] = value;
       }
-      const summary = configSummary({ kind: n.data.kind, config });
+      const summary = configSummary({ kind: String(n.data.kind), config });
       return { ...n, data: { ...n.data, config, summary } };
     }));
   };
@@ -212,7 +212,7 @@ export default function FlowsPage() {
           {/* runs of the selected flow */}
           {selectedId && (runs ?? []).length > 0 && (
             <>
-              <h3 style={{ marginTop: 12 }}>Runs <span className="count">{runs.length}</span></h3>
+              <h3 style={{ marginTop: 12 }}>Runs <span className="count">{(runs ?? []).length}</span></h3>
               {(runs ?? []).slice(0, 8).map((r: any) => (
                 <div key={r.id} className="item" style={{ fontSize: 11 }}>
                   <span className={`dot ${r.status === 'completed' ? 'd-green' : r.status === 'failed' ? 'd-red' : r.status === 'waiting' || r.status === 'paused' || r.status === 'interrupted' ? 'd-amber' : 'd-blue'}`} />
@@ -276,7 +276,7 @@ export default function FlowsPage() {
                 <span className="badge b-gray">{String(editingNode.data.kind)}</span>
               </div>
               {(CONFIG_FIELDS[String(editingNode.data.kind)] ?? []).map(f => {
-                const raw = editingNode.data.config?.[f.key];
+                const raw = (editingNode.data.config as Record<string, unknown> | undefined)?.[f.key];
                 const val = typeof raw === 'object' ? JSON.stringify(raw) : (raw ?? '');
                 return (
                   <div className="row" key={f.key} style={{ marginBottom: 6 }}>
