@@ -16,6 +16,7 @@ import { evaluateGate, type ToolContext } from '../kernel/types';
 import * as store from './store';
 import { resolveSkillChain, requiredToolsFor, recordSkillExecution } from './skills';
 import { searchMemory, createMemory } from './memory';
+import { openWorkingMemory, appendFact, closeWorkingMemory, renderWorkingMemory, getWorkingMemory } from './workingmemory';
 import { config } from '../config';
 import type {
   AgentRecord, ExecutionRecord, Plan, PlanStep, TraceEntry, Observation,
@@ -128,6 +129,20 @@ export class AgentRuntime {
         push({ ts: iso(), kind: 'memory', message: `Retrieved ${memories.length} memories`, data: memories.map(m => m.id) });
       }
 
+      // 2b) WORKING MEMORY WINDOW (Phase 5) — opens per execution; pinned
+      // memories + step facts stay inspectable and feed planner + synthesis.
+      const wm = await openWorkingMemory(this.db, {
+        execution_id: execId, user_id: opts.user_id, agent_id: agent.id,
+        pinned_memory_ids: memories.map(m => m.id),
+      }).catch(() => null);
+      if (wm) {
+        if (memories.length) {
+          await appendFact(this.db, execId, { source: 'retrieval', step: 0, text: `Retrieved ${memories.length} memories: ${memories.map(m => m.summary.slice(0, 60)).join(' | ')}` }).catch(() => {});
+        }
+        await this.bus.emit('memory.working.opened', { execution_id: execId, pinned: wm.pinned_memory_ids.length },
+          { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
+      }
+
       // 3) PLANNER — resumed executions reuse the persisted plan (checkpoint);
       //    a direct skill request skips planning entirely (skill step + synthesis)
       let plan: Plan;
@@ -237,10 +252,18 @@ export class AgentRuntime {
           return;
         }
         observations.push({ step: i + 1, source: step.kind, summary: summarizeOutcome(result.result), data: result.result as any });
+        // Phase 5: record the step outcome as a working-memory fact (bounded)
+        await appendFact(this.db, execId, {
+          source: step.kind, step: i + 1,
+          text: `Step ${i + 1} (${stepLabel(step)}): ${summarizeOutcome(result.result)}`,
+        }).catch(() => {});
         await persist();
       }
 
       // 5) RESULT — final synthesis (streamed live to the UI)
+      // Phase 5: the working-memory window feeds synthesis — bounded facts
+      // instead of the full observation log (this was the 429-growth path)
+      const wmNow = await getWorkingMemory(this.db, execId).catch(() => null);
       const synthPump = this.makeTokenPump(execId, agent, 'synthesis');
       const synthCtl = new AbortController();
       this.trackAbort(execId, synthCtl);
@@ -252,6 +275,7 @@ export class AgentRuntime {
             prompt: [
               `Original request: ${input}`,
               `Plan rationale: ${plan.rationale}`,
+              `Working memory:\n${renderWorkingMemory(wmNow) || '(no facts recorded)'}`,
               `Observations:`,
               ...observations.map((o, n) => `${n + 1}. [${o.source}] ${JSON.stringify(o.data).slice(0, 500)}`),
               `Write the final answer for the user: what was done, what was created, ids if any.`,
@@ -274,6 +298,7 @@ export class AgentRuntime {
           user_id: opts.user_id, type: 'episodic',
           content: `Agent ${agent.name} handled request "${input.slice(0, 160)}" → ${result.slice(0, 160)}`,
           importance: 4, source: `agent:${agent.name}`, source_id: execId, project_id: opts.project_id ?? null,
+          bus: this.bus,
         }).catch(() => {});
       }
 
@@ -598,6 +623,10 @@ export class AgentRuntime {
   private async finish(execId: string, status: ExecutionRecord['status'], result: string | null, error: string | null, agent: AgentRecord): Promise<void> {
     this.control.delete(execId);
     await store.updateExecution(this.db, execId, { status, result, error, completed_at: iso() });
+    // Phase 5: close the working-memory window (terminal state; facts stay readable)
+    await closeWorkingMemory(this.db, execId).catch(() => {});
+    await this.bus.emit('memory.working.closed', { execution_id: execId, status },
+      { actor_type: 'agent', actor_id: agent.id, target_type: 'execution', target_id: execId }).catch(() => {});
     const agentStatus = status === 'completed' ? 'idle' : status === 'failed' ? 'idle' : 'idle';
     await store.setAgentStatus(this.db, agent.id, agentStatus);
     const eventType = status === 'completed' ? 'agent.completed' : status === 'failed' ? 'agent.failed' : status === 'cancelled' ? 'agent.stopped' : 'agent.completed';
@@ -624,6 +653,14 @@ function summarizeOutcome(r: unknown): string {
     const s = typeof r === 'string' ? r : JSON.stringify(r);
     return s.length > 140 ? s.slice(0, 140) + '…' : s;
   } catch { return '(unserializable)'; }
+}
+
+/** Phase 5: short label of a plan step for working-memory facts. */
+function stepLabel(s: PlanStep): string {
+  if (s.kind === 'tool') return s.tool;
+  if (s.kind === 'skill') return s.skill;
+  if (s.kind === 'model') return s.capability ?? 'reasoning';
+  return 'step';
 }
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }

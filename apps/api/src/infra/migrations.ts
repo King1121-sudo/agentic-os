@@ -10,6 +10,13 @@ const MIGRATIONS: { id: string; file: string }[] = [
   { id: '001_kernel', file: '001_kernel.sql' },
   { id: '002_agent_messages', file: '002_agent_messages.sql' },
   { id: '003_skill_history', file: '003_skill_history.sql' },
+  { id: '004_memory', file: '004_memory.sql' },
+  { id: '005_memory_scan', file: '005_memory_scan.sql' },
+  { id: '006_projects_sprints', file: '006_projects_sprints.sql' },
+  { id: '007_flows', file: '007_flows.sql' },
+  { id: '008_automations', file: '008_automations.sql' },
+  { id: '009_integrations', file: '009_integrations.sql' },
+  { id: '010_widgets_push', file: '010_widgets_push.sql' },
 ];
 
 export async function runMigrations(db: DataPort): Promise<string[]> {

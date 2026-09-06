@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Phase 5: pgvector build of Postgres 16 — drop-in for postgres:16-alpine,
+    # adds the `vector` extension the semantic-memory driver uses.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: agentic
       POSTGRES_PASSWORD: agentic

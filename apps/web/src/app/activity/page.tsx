@@ -60,13 +60,18 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
   const [gens, setGens] = useState<any[]>([]);
   const [children, setChildren] = useState<any[]>([]);
   const [showAudit, setShowAudit] = useState(false);
+  // Phase 5: working-memory window for THIS execution
+  const [wm, setWm] = useState<any | null>(null);
   // Phase 2: live token stream for THIS execution (volatile SSE events)
   const [liveText, setLiveText] = useState<{ phase: string; text: string } | null>(null);
 
   useEffect(() => {
-    api(`/api/audit?execution_id=${execId}`).then(setAudit).catch(() => {});
-    api(`/api/generations?execution_id=${execId}`).then(setGens).catch(() => {});
-    api(`/api/executions/${execId}/children`).then(setChildren).catch(() => {});
+    // Normalize every response: a null/undefined body (e.g. 404) becomes [] —
+    // never let a non-array flow into state that the render assumes is a list.
+    api(`/api/audit?execution_id=${execId}`).then(r => setAudit(Array.isArray(r) ? r : [])).catch(() => setAudit([]));
+    api(`/api/generations?execution_id=${execId}`).then(r => setGens(Array.isArray(r) ? r : [])).catch(() => setGens([]));
+    api(`/api/executions/${execId}/children`).then(r => setChildren(Array.isArray(r) ? r : [])).catch(() => setChildren([]));
+    api(`/api/executions/${execId}/working-memory`).then(r => setWm(r && !r.error ? r : null)).catch(() => setWm(null));
   }, [execId]);
 
   // subscribe to token deltas for this execution
@@ -97,6 +102,9 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
 
   if (!exec) return null;
   const e: any = exec;
+  // Wire-shape normalization for the execution record's embedded arrays.
+  const traceEntries = Array.isArray(e.trace) ? e.trace : [];
+  const planSteps = e.plan && Array.isArray(e.plan.steps) ? e.plan.steps : [];
   const statusBadge = e.status === 'completed' ? 'b-green' : e.status === 'failed' ? 'b-red' :
     e.status === 'approval_required' ? 'b-amber' : e.status === 'paused' ? 'b-amber' :
     e.status === 'interrupted' ? 'b-purple' : e.status === 'cancelled' ? 'b-gray' : 'b-blue';
@@ -151,11 +159,11 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
         </div>
       )}
 
-      {e.plan && (
+      {planSteps.length > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div className="xs faint" style={{ marginBottom: 4 }}>PLAN — {e.plan.rationale}</div>
           <div className="trace">
-            {e.plan.steps.map((s: any, i: number) => (
+            {planSteps.map((s: any, i: number) => (
               <div key={i} className={`step ${s.kind}`}>
                 <div className="msg small">
                   {s.kind === 'tool' && <span className="badge b-blue">tool</span>}
@@ -172,9 +180,38 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
         </div>
       )}
 
-      <div className="xs faint" style={{ marginBottom: 4 }}>EXECUTION TRACE ({e.trace?.length ?? 0})</div>
+      {wm && Array.isArray(wm.facts) && (
+        <div style={{ marginBottom: 12 }}>
+          <div className="xs faint" style={{ marginBottom: 4 }}>
+            WORKING MEMORY — {wm.pinned_memory_ids?.length ?? 0} pinned · {wm.facts.length} facts · ~{wm.token_estimate} tokens
+            {wm.closed_at ? ' · closed' : ' · open'}
+          </div>
+          <div className="trace">
+            {(wm.pinned_memory_ids ?? []).length > 0 && (
+              <div className="step memory">
+                <div className="msg small">
+                  <span className="badge b-purple">pinned</span>{' '}
+                  {wm.pinned_memory_ids.map((id: string) => id.slice(0, 8)).join(', ')}
+                </div>
+                <div className="ts">long-term memories retrieved at planning</div>
+              </div>
+            )}
+            {wm.facts.slice().reverse().map((f: any, i: number) => (
+              <div key={i} className={`step ${f.source === 'retrieval' ? 'memory' : f.source}`}>
+                <div className="msg small">{f.text}</div>
+                <div className="ts">{fmtTime(f.ts)} · {f.source}{f.step ? ` · step ${f.step}` : ''}</div>
+              </div>
+            ))}
+            {wm.facts.length === 0 && (wm.pinned_memory_ids ?? []).length === 0 && (
+              <div className="xs faint" style={{ padding: '4px 0' }}>(empty window)</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="xs faint" style={{ marginBottom: 4 }}>EXECUTION TRACE ({traceEntries.length})</div>
       <div className="trace">
-        {(e.trace ?? []).map((t: any, i: number) => (
+        {traceEntries.map((t: any, i: number) => (
           <div key={i} className={`step ${t.kind}`}>
             <div className="msg">{t.message}</div>
             <div className="ts">{fmtTime(t.ts)} · {t.kind}</div>

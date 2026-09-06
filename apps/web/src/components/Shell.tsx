@@ -11,9 +11,12 @@ const NAV = [
   { href: '/memory', icon: 'Ⓜ', label: 'Memory', key: '3' },
   { href: '/projects', icon: '◫', label: 'Projects', key: '4' },
   { href: '/skills', icon: 'Ⓥ', label: 'Skills', key: '5' },
-  { href: '/activity', icon: '⏣', label: 'Activity', key: '6' },
-  { href: '/links', icon: '⤫', label: 'Links', key: '7' },
-  { href: '/settings', icon: '⚙', label: 'Settings', key: '8' },
+  { href: '/flows', icon: '⎔', label: 'Flows', key: '6' },
+  { href: '/automations', icon: '⏁', label: 'Automations', key: '7' },
+  { href: '/integrations', icon: '⎌', label: 'Integrations', key: 'i' },
+  { href: '/activity', icon: '⏣', label: 'Activity', key: '8' },
+  { href: '/links', icon: '⤫', label: 'Links', key: '9' },
+  { href: '/settings', icon: '⚙', label: 'Settings', key: '0' },
 ];
 
 export type OsEvent = {

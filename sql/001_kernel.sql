@@ -204,8 +204,11 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
   depends_on TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  UNIQUE (task_id, depends_on)
 );
+CREATE INDEX IF NOT EXISTS idx_taskdep_task ON task_dependencies(task_id);
+CREATE INDEX IF NOT EXISTS idx_taskdep_dep  ON task_dependencies(depends_on);
 
 CREATE TABLE IF NOT EXISTS skills (
   id TEXT PRIMARY KEY,

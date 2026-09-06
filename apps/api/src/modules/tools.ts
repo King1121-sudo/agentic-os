@@ -13,6 +13,8 @@ export type { ToolDef } from '../kernel/types';
 import { config } from '../config';
 import * as store from './store';
 import { createMemory, searchMemory } from './memory';
+import * as projects from './projects';
+import { clearDeadlineAlerts } from './automations';
 import type { AgentRuntime } from './runtime';
 
 /** Phase 3: set by main.ts after the runtime is constructed (avoids the cycle). */
@@ -112,13 +114,20 @@ export function createBuiltinTools(db: DataPort): ToolDef[] {
     },
     {
       name: 'task.update',
-      description: 'Update a task by id (status, priority, title, ...).',
+      description: 'Update a task by id (status, priority, title, ...). Completing a task auto-unblocks dependent tasks.',
       risk: 'medium', scope: 'tasks:write',
       schema: { task_id: { type: 'string', required: true, description: 'Task id' }, status: { type: 'string', required: false, description: 'todo|in_progress|blocked|done|archived' } },
       async execute(args) {
         const t = await store.updateTask(db, String(args.task_id), args as Record<string, unknown>);
         if (!t) throw new Error(`Task not found: ${args.task_id}`);
-        return { id: t.id, status: t.status };
+        // Phase 6: completing a task cascades — dependent tasks re-evaluate their
+        // blocked state (blocked → todo when ready) and deadline alerts reset
+        let unblocked: string[] = [];
+        if (t.status === 'done' || t.status === 'archived') {
+          unblocked = await projects.cascadeUnblock(db, t.id);
+          await clearDeadlineAlerts(db, t.id).catch(() => {});
+        }
+        return { id: t.id, status: t.status, unblocked_dependents: unblocked.length };
       },
     },
     {
@@ -139,6 +148,80 @@ export function createBuiltinTools(db: DataPort): ToolDef[] {
       async execute(args, ctx) {
         const p = await store.createProject(db, { name: String(args.name), description: String(args.description ?? ''), created_by: ctx.user_id });
         return { id: p.id, name: p.name, slug: p.slug };
+      },
+    },
+    {
+      name: 'task.depend',
+      description: 'Declare that one task depends on another (must finish first). Enforces no self-dependency, duplicates, or cycles; auto-blocks the dependent task.',
+      risk: 'medium', scope: 'tasks:write',
+      schema: {
+        task_id: { type: 'string', required: false, description: 'Id of the dependent task (the one that waits)' },
+        depends_on: { type: 'string', required: false, description: 'Id of the task it waits on' },
+        task_title: { type: 'string', required: false, description: 'Dependent task by title (resolved if ids absent)' },
+        depends_on_title: { type: 'string', required: false, description: 'Dependency task by title (resolved if ids absent)' },
+      },
+      async execute(args, ctx) {
+        // resolve by title when ids are absent (heuristic planner passes titles)
+        const resolveTask = async (id?: string, title?: string): Promise<string | null> => {
+          if (id) return String(id);
+          if (title) {
+            const t = (await store.listTasks(db, { limit: 500 })).find(x => x.title.toLowerCase() === String(title).toLowerCase());
+            return t?.id ?? null;
+          }
+          return null;
+        };
+        const taskId = await resolveTask(args.task_id as string, args.task_title as string);
+        const dependsOn = await resolveTask(args.depends_on as string, args.depends_on_title as string);
+        if (!taskId || !dependsOn) throw new Error('could not resolve both tasks (pass ids or exact titles)');
+        const r = await projects.addDependency(db, taskId, dependsOn);
+        if (!r.ok) throw new Error(r.error);
+        return { id: r.id, task_id: taskId, depends_on: dependsOn, blocked: true };
+      },
+    },
+    {
+      name: 'sprint.plan',
+      description: 'Plan a sprint for a project: create the sprint, its tasks with priorities, and dependency edges between them. Returns a dependency-ordered schedule.',
+      risk: 'medium', scope: 'projects:write',
+      schema: {
+        project_name: { type: 'string', required: true, description: 'Project name (created if missing)' },
+        sprint_name: { type: 'string', required: false, description: 'Sprint name (default: "Sprint N")' },
+        objective: { type: 'string', required: false, description: 'Sprint objective' },
+        tasks_json: { type: 'string', required: true, description: 'JSON array of {title, description?, priority?, depends_on_titles?: string[]}' },
+      },
+      async execute(args, ctx) {
+        // resolve project (create if missing — same convention as task.create)
+        const existing = await store.findProjectByName(db, String(args.project_name));
+        const project = existing ?? await store.createProject(db, { name: String(args.project_name), created_by: ctx.user_id });
+        // parse the task plan (LLM planners pass JSON; heuristic passes pre-validated arrays)
+        let tasks: any[];
+        if (typeof args.tasks_json === 'string') {
+          try { tasks = JSON.parse(args.tasks_json); } catch { throw new Error('tasks_json is not valid JSON'); }
+        } else if (Array.isArray(args.tasks_json)) {
+          tasks = args.tasks_json;
+        } else {
+          throw new Error('tasks_json must be a JSON array of task definitions');
+        }
+        if (!Array.isArray(tasks) || tasks.length === 0) throw new Error('tasks_json must contain at least one task');
+        const plan = {
+          project_id: project.id,
+          name: String(args.sprint_name ?? `Sprint ${new Date().toISOString().slice(0, 10)}`),
+          objective: String(args.objective ?? ''),
+          tasks: tasks.slice(0, 12).map((t: any) => ({
+            title: String(t.title ?? '').slice(0, 200),
+            description: String(t.description ?? ''),
+            priority: (['low', 'medium', 'high', 'urgent'].includes(t.priority) ? t.priority : 'medium'),
+            depends_on_titles: Array.isArray(t.depends_on_titles) ? t.depends_on_titles.map(String) : [],
+          })).filter((t: any) => t.title.length > 0),
+        };
+        if (plan.tasks.length === 0) throw new Error('no valid task definitions in tasks_json');
+        const res = await projects.materializeSprintPlan(db, plan);
+        return {
+          sprint_id: res.sprint.id, sprint_name: res.sprint.name, project: project.name,
+          tasks_created: res.tasks.length,
+          blocked_by_dependencies: res.blocked_count,
+          schedule: res.order.slice(0, 12).map(o => ({ task_id: o.task_id, level: o.level, depends_on: o.depends_on.length })),
+          order: 'dependency-sorted (level 0 first, same-level tasks parallelizable)',
+        };
       },
     },
     {

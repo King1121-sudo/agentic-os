@@ -15,6 +15,9 @@ export class PgDataPort implements DataPort {
     this.pool = new Pool({ connectionString: connectionUrl, max: 10 });
   }
 
+  /** Phase 5: raw pool for vector drivers (pgvector) that need native types. */
+  getPool(): any { return this.pool; }
+
   private toDollar(sql: string): string {
     let i = 0;
     return sql.replace(/\?/g, () => `$${++i}`);

@@ -26,12 +26,13 @@ export interface IntegrationPort {
   disconnect(account: string): Promise<void>;
   /** Poll or push subscription → emits IntegrationEvent into the bus. */
   subscribe(broker: BrokerPort, onEvent: (ev: IntegrationEvent) => void): Promise<() => void>;
-  /** CRUD against the external system (capability-dependent). */
+  /** CRUD against the external system (capability-dependent). The optional
+   *  token param is the vault token for the calling connection (Phase 9). */
   read?(query: Record<string, unknown>): Promise<unknown[]>;
   create?(item: Record<string, unknown>): Promise<unknown>;
   update?(id: string, patch: Record<string, unknown>): Promise<unknown>;
   delete?(id: string): Promise<void>;
-  search?(q: string): Promise<unknown[]>;
+  search?(q: string, token?: string): Promise<unknown[]>;
 }
 
 /** Registry the API will expose via /api/integrations once adapters land. */

@@ -147,6 +147,8 @@ const PLAN_TOOL_HINTS: { re: RegExp; step: any }[] = [
   { re: /\b(what do you (know|remember)|recall|memory|remind me)\b/i, step: { kind: 'tool', tool: 'memory.search', args: { k: 5 } } },
   { re: /\b(create|add|new|make|open)\s+(a\s+)?(task|todo|item)\b/i, step: { kind: 'tool', tool: 'task.create', args: {} } },
   { re: /\b(create|add|new|start|make)\s+(a\s+)?(project|workspace)\b/i, step: { kind: 'tool', tool: 'project.create', args: {} } },
+  { re: /\b(plan|prepare|sprint)\b.*\b(sprint|sprint plan|iteration)\b/i, step: { kind: 'tool', tool: 'sprint.plan', args: {} } },
+  { re: /\b(?:before|after)\b.*\btask\b|\bdepends?\s+on\b|\b(blocked? by|waits? for)\b/i, step: { kind: 'tool', tool: 'task.depend', args: {} } },
   { re: /\b(list|show|all)\s+(tasks?|todos?|backlog)\b/i, step: { kind: 'tool', tool: 'task.list', args: {} } },
   { re: /\b(complete|finish|done with|mark)\b.*\btask\b/i, step: { kind: 'tool', tool: 'task.update', args: { status: 'done' } } },
   { re: /https?:\/\/\S+/i, step: { kind: 'tool', tool: 'http.fetch', args: {} } },
@@ -247,6 +249,56 @@ function extractArgs(tool: string, prompt: string): Record<string, unknown> {
     const m = t.match(/(?:message\s+(?:to|for)\s+|tell\s+)([A-Za-z]+)[\s:]+(.+)$/i) ?? t.match(/\b(coder|researcher|monitor|planner|hermes)\b[\s:]+(.+)$/i);
     if (m) return { agent_name: m[1], content: m[2].trim().slice(0, 1000) };
     return {};
+  }
+
+  if (tool === 'task.depend') {
+    // "task <id|title> depends on|before|blocked by <id|title>" — ids win over titles
+    const ids = t.match(/\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/gi);
+    if (ids && ids.length >= 2) {
+      // order in the sentence: the dependent task first, the dependency second
+      const first = t.toLowerCase().indexOf(ids[0].toLowerCase()) < t.toLowerCase().indexOf(ids[1].toLowerCase()) ? ids[0] : ids[1];
+      const second = first === ids[0] ? ids[1] : ids[0];
+      return { task_id: first, depends_on: second };
+    }
+    // title form: "<A> depends on <B>" | "<A> after <B>" | "<A> blocked by <B>"
+    const m = t.match(/(?:task\s+)?["“']?([^"”']{3,120}?)["”']?\s+(?:depends?\s+on|after|blocked?\s+by|waits?\s+for)\s+["“']?(.{3,120}?)["”']?\s*$/i);
+    if (m) return { task_title: m[1].trim(), depends_on_title: m[2].trim() };
+    return {};
+  }
+
+  if (tool === 'sprint.plan') {
+    // extract project name FIRST (trailing "in project X"), then the goal from what remains
+    let project_name: string | undefined;
+    let goalSource = t;
+    const pm = t.match(/\s+(?:in|for|under)\s+(?:the\s+)?(?:project|workspace)\s+["“']?([A-Za-z0-9][A-Za-z0-9 _-]{1,40})["”']?\s*$/i);
+    if (pm) {
+      project_name = pm[1].trim();
+      goalSource = t.slice(0, pm.index); // strip the project fragment from the goal source
+    } else {
+      const pm2 = t.match(/(?:sprint\s+for|sprint\s+in)\s+["“']?([A-Za-z0-9][A-Za-z0-9 _-]{1,40})["”']?/i);
+      if (pm2) { project_name = pm2[1].trim(); goalSource = t.slice(0, pm2.index); }
+    }
+    // explicit task JSON array in the request (LLM-structured or power users)
+    const jm = goalSource.match(/\[\s*{[\s\S]*}\s*\]/);
+    if (jm) {
+      try {
+        const parsed = JSON.parse(jm[0]);
+        if (Array.isArray(parsed)) return { project_name, tasks_json: jm[0] };
+      } catch { /* fall through to template */ }
+    }
+    // goal text → deterministic standard plan template (design → build → test → deploy)
+    const goal = goalSource
+      .replace(/^.*?(?:plan|prepare|create|make|start)\s+(?:an?\s+)?sprint\s+(?:for|on|to|about)?\s*/i, '')
+      .replace(/^.*?(?:plan|prepare|create|make|start)\s+(?:an?\s+)?sprint\s*$/i, '')
+      .trim();
+    const g = goal.length > 3 ? goal : 'the objective';
+    const template = [
+      { title: `Design: ${g}`, description: 'Define requirements and approach', priority: 'high', depends_on_titles: [] },
+      { title: `Implement: ${g}`, description: 'Build the solution per the design', priority: 'urgent', depends_on_titles: [`Design: ${g}`] },
+      { title: `Test: ${g}`, description: 'Verify behavior against requirements', priority: 'high', depends_on_titles: [`Implement: ${g}`] },
+      { title: `Deploy: ${g}`, description: 'Ship and monitor', priority: 'medium', depends_on_titles: [`Test: ${g}`] },
+    ];
+    return { project_name, tasks_json: JSON.stringify(template) };
   }
 
   return {};

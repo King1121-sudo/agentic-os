@@ -26,9 +26,9 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      {showMailbox && messages && messages.length > 0 && (
+      {showMailbox && (messages ?? []).length > 0 && (
         <div className="card" style={{ marginBottom: 14 }}>
-          <h3>Agent Mailbox <span className="count">{messages.filter((m: any) => m.status === 'pending').length} pending</span></h3>
+          <h3>Agent Mailbox <span className="count">{(messages ?? []).filter((m: any) => m.status === 'pending').length} pending</span></h3>
           {(messages ?? []).slice(0, 8).map((m: any) => (
             <div key={m.id} className="item">
               <span className={`dot ${m.status === 'pending' ? 'd-amber' : 'd-gray'}`} />
