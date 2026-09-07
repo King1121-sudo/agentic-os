@@ -57,22 +57,27 @@ describe('phase 10 — web push crypto', () => {
 
   it('vapidJwt is a well-formed ES256 JWT (verifiable with the public key)', () => {
     const keys = getVapidKeys(dataDir);
-    const jwt = vapidJwt(keys, 'https://fcm.googleapis.com', 'mailto:ops@agentic-os.local');
-    const [h, p, sig] = jwt.split('.');
-    expect(Buffer.from(h, 'base64url').toString()).toContain('ES256');
-    const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
-    expect(payload.aud).toBe('https://fcm.googleapis.com');
-    expect(payload.sub).toBe('mailto:ops@agentic-os.local');
-    expect(payload.exp).toBeGreaterThan(Date.now() / 1000);
-    // signature is 64 bytes raw (r||s)
-    expect(Buffer.from(sig, 'base64url').length).toBe(64);
-    // verify against the VAPID public key
-    const pub = Buffer.from(keys.publicKey, 'base64url');
-    const pubKey = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') } as any, format: 'jwk' });
-    const verified = crypto.verify('sha256', Buffer.from(`${h}.${p}`), {
-      key: pubKey, dsaEncoding: 'ieee-p1363',
-    }, Buffer.from(sig, 'base64url'));
-    expect(verified).toBe(true);
+    // Loop: Node's DER ECDSA signature length varies (70/71/72 bytes) with the
+    // zero-padding of r/s — each JWT signs fresh random-ish input, so a single
+    // iteration misses the 72-byte branch. Loop enough to hit all shapes.
+    for (let i = 0; i < 40; i++) {
+      const jwt = vapidJwt(keys, 'https://fcm.googleapis.com', 'mailto:ops@agentic-os.local', 3600 + i);
+      const [h, p, sig] = jwt.split('.');
+      expect(Buffer.from(h, 'base64url').toString()).toContain('ES256');
+      const payload = JSON.parse(Buffer.from(p, 'base64url').toString());
+      expect(payload.aud).toBe('https://fcm.googleapis.com');
+      expect(payload.sub).toBe('mailto:ops@agentic-os.local');
+      expect(payload.exp).toBeGreaterThan(Date.now() / 1000);
+      // signature is 64 bytes raw (r||s)
+      expect(Buffer.from(sig, 'base64url').length).toBe(64);
+      // verify against the VAPID public key
+      const pub = Buffer.from(keys.publicKey, 'base64url');
+      const pubKey = crypto.createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: pub.subarray(1, 33).toString('base64url'), y: pub.subarray(33).toString('base64url') } as any, format: 'jwk' });
+      const verified = crypto.verify('sha256', Buffer.from(`${h}.${p}`), {
+        key: pubKey, dsaEncoding: 'ieee-p1363',
+      }, Buffer.from(sig, 'base64url'));
+      if (!verified) throw new Error(`JWT signature failed verification on iteration ${i} (DER shape bug)`);
+    }
   });
 
   it('encryptPushPayload produces a structurally valid aes128gcm body', () => {

@@ -86,22 +86,30 @@ export function vapidJwt(keys: VapidKeys, audience: string, subject: string, exp
     d: keys.privateKey,
   };
   const der = crypto.createSign('SHA256').update(signingInput).sign(crypto.createPrivateKey({ key: jwk as any, format: 'jwk' }));
-  // DER ECDSA signature → raw r||s (64 bytes)
-  let r: Buffer, s: Buffer;
-  if (der.length === 72) { r = der.subarray(8, 8 + 32); s = der.subarray(der.length - 32); }
-  else {
-    // generic DER sequence parse (short ints may drop leading zeros)
+  // DER ECDSA signature → raw r||s (64 bytes). Use Node's ieee-p1363 output
+  // directly when available (eliminates DER parsing entirely); fall back to a
+  // universal DER sequence parse for runtimes without dsaEncoding support.
+  let rawSig: Buffer;
+  try {
+    rawSig = crypto.createSign('SHA256').update(signingInput).sign(
+      { key: crypto.createPrivateKey({ key: jwk as any, format: 'jwk' }), dsaEncoding: 'ieee-p1363' } as crypto.SignKeyObjectInput,
+    );
+  } catch {
+    // universal DER parse: SEQUENCE(02 <len> <r> 02 <len> <s>) — handles the
+    // 70/71/72-byte shapes (integers may drop or need leading-zero padding)
     let i = 2;
     const rLen = der[i + 1];
-    const rStart = rLen === 33 ? i + 3 : i + 2;
-    r = der.subarray(rStart, rStart + 32);
+    let rStart = i + 2;
+    if (rLen === 33) rStart = i + 3; // leading-zero padding byte
+    const r = der.subarray(rStart, rStart + 32);
     i = rStart + 32;
     const sLen = der[i + 1];
-    const sStart = sLen === 33 ? i + 3 : i + 2;
-    s = der.subarray(sStart, sStart + 32);
+    let sStart = i + 2;
+    if (sLen === 33) sStart = i + 3;
+    const s = der.subarray(sStart, sStart + 32);
+    rawSig = Buffer.concat([r, s]);
   }
-  const rawSig = b64u(Buffer.concat([r, s]));
-  return `${signingInput}.${rawSig}`;
+  return `${signingInput}.${b64u(rawSig)}`;
 }
 
 /** aes128gcm content-encoding (RFC 8291 §2) with a random 16-byte salt. */
