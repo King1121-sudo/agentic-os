@@ -105,15 +105,34 @@ export function buildApi(deps: ApiDeps) {
   });
 
   // ─── auth ──────────────────────────────────────────────────────────────────
+  // Login throttle: per-username+IP sliding window (5 failures → 10-min lockout).
+  // In-process on purpose — single-node deployments; swap for Redis when scaled.
+  const loginFailures = new Map<string, { n: number; first: number; lockUntil?: number }>();
+  const LOGIN_MAX = 5;
+  const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+  const LOGIN_LOCK_MS = 10 * 60 * 1000;
+  const loginKey = (req: any, username: string) => `${username}|${req.ip ?? 'unknown'}`;
+
   app.post('/api/auth/login', async (req: any, reply: any) => {
     const parsed = LoginInput.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid input', details: parsed.error.flatten() });
     const { username, password } = parsed.data;
+    const key = loginKey(req, username);
+    const rec = loginFailures.get(key);
+    if (rec?.lockUntil && Date.now() < rec.lockUntil) {
+      return reply.code(429).send({ error: 'too many failed attempts — try again later' });
+    }
     const rows = await db.query<any>('SELECT * FROM users WHERE username = ?', [username]);
     const user = rows[0];
     if (!user || !verifyPassword(password, user.password_hash)) {
+      const now = Date.now();
+      const cur = rec && now - rec.first < LOGIN_WINDOW_MS ? rec : { n: 0, first: now };
+      cur.n += 1;
+      if (cur.n >= LOGIN_MAX) cur.lockUntil = now + LOGIN_LOCK_MS;
+      loginFailures.set(key, cur);
       return reply.code(401).send({ error: 'invalid credentials' });
     }
+    loginFailures.delete(key);
     const sid = crypto.randomBytes(32).toString('hex');    const expires = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
     await db.run('INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?,?,?,?)', [sid, user.id, iso(), expires]);
     reply.header('set-cookie', `${SESSION_COOKIE}=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);

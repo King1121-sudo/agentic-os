@@ -46,7 +46,7 @@ export default function LinksPage() {
     simRef.current = { nodes, edges: snapshot.edges };
   }, [snapshot]);
 
-  // ── force simulation loop (zero-dep): spring links + repulsion + damping ──
+  // -- force simulation loop (zero-dep): spring links + repulsion + damping --
   useEffect(() => {
     let raf = 0;
     const step = () => {
@@ -149,7 +149,7 @@ export default function LinksPage() {
     return () => cancelAnimationFrame(raf);
   }, [running, focusId, selected]);
 
-  // ── pointer interactions: pan, zoom, hover, click ──
+  // -- pointer interactions: pan, zoom, hover, click --
   const toWorld = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();

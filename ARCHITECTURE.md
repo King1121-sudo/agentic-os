@@ -1,68 +1,95 @@
-# Agentic OS — Architecture (Kernel v0.1)
+# Agentic OS — Architecture (v0.12.0)
 
 ## 1. Ports & adapters (the replaceability spine)
 
 Every subsystem talks to a PORT; concrete drivers are adapters selected at boot:
 
 ```
-DataPort ──────── SqliteDataPort (node:sqlite, default)   │ PgDataPort (pg, DATABASE_URL)
-BrokerPort ────── InProcessBroker (default)                │ RedisBroker (REDIS_URL)
-ModelProviderPort BuiltinProvider │ OpenAICompatProvider │ OllamaProvider │ (future: Gemini…)
-IntegrationPort  (registry; adapters Phase 9)
+DataPort ──────── SqliteDataPort (node:sqlite, default) │ PgDataPort (pg, DATABASE_URL)
+BrokerPort ────── InProcessBroker (default)              │ RedisBroker (REDIS_URL)
+ModelProviderPort BuiltinProvider │ OpenAICompatProvider │ OllamaProvider │ GeminiProvider
+VectorIndexPort ─ LocalVectorIndex (hash-128 cosine)    │ PgVectorIndex (pgvector ANN)
+IntegrationPort  (registry + GitHub/Gmail/Slack adapters)
 ```
 
-All SQL is dialect-neutral: TEXT/INTEGER/REAL columns, app-side UUIDs, `?`-params (Pg adapter converts to `$n`). One schema (`sql/001_kernel.sql`) runs on both. This is why Postgres/pgvector/Redis swap in without touching any subsystem.
+All SQL is dialect-neutral: TEXT/INTEGER/REAL columns, app-side UUIDs, `?`-params (the Pg adapter converts to `$n`). Ten migrations (`sql/001…010`, tracked via `schema_migrations`) run identically on both drivers; fresh-DB boot applies all ten idempotently (41 tables).
 
-## 2. Kernel execution pipeline (§5 of the spec)
+## 2. Kernel execution pipeline
 
 ```
-EVENT (command.executed)
- → CONTEXT RESOLVER (project/task resolution)
- → MEMORY RETRIEVAL (composite-scored top-k)
+EVENT (command.executed / automation / webhook / flow node)
+ → CONTEXT RESOLVER (project/task + agent mailbox)
+ → MEMORY RETRIEVAL (composite-scored top-k) + WORKING-MEMORY WINDOW (Phase 5)
  → PLANNER (Model Gateway, capability='planning')
  → STEP LOOP: tool | skill | model steps
      tool step → SECURITY GATE (toolset ∩ scopes ∩ schema ∩ risk×autonomy)
               → [APPROVAL GATE (suspends execution, notification, timeout)]
-              → execute → record tool_execution → audit → event
- → RESULT (final synthesis generation)
- → MEMORY UPDATE (episodic)
- → EVENT (agent.completed) → NOTIFICATION
+              → execute → tool_execution row → audit → event
+ → RESULT (final streamed synthesis)
+ → MEMORY UPDATE (episodic) → EVENT → NOTIFICATION
 ```
 
-Every hop appends to the execution's `trace[]` (persisted between steps — checkpointed), and emits both an event (activity stream) and audit entry (immutable trail). The Activity panel renders the trace + plan + audit + generations of any execution — the "why did the agent do that" view.
+Every hop appends to the execution's `trace[]` (persisted between steps — checkpointed), emits an event, and writes an audit row. Executions are resumable from checkpoints; delegated children form an execution graph (`parent_execution_id`, depth-guarded).
 
-## 3. Subsystems
+## 3. Command convergence
 
-**Model Gateway** — `ModelRouter.candidates()`: healthy providers → agent preference first → capability match → priority desc, cost asc. `generate()` tries up to 4 candidates, marking failed providers down and falling through; every attempt is a Generation row (tokens, latency, cost, status). Builtin provider is the never-fails floor: a deterministic planner (keyword-driven step selection with natural-language arg extraction) and reasoner/summarizer. Honest label: it's not an LLM; it makes the kernel fully operable with zero external deps, and real LLMs slot in via env config.
+Every entry point funnels into the same architecture — there is no parallel voice/automation agent system:
 
-**Memory Engine** — 7 types (working/episodic/semantic/preference/project/procedural/entity). Retrieval score = 0.40·keyword + 0.25·vector + 0.15·recency(e^{-age/30d}) + 0.15·importance + 0.05·access. Duplicate content reinforces instead of duplicating; decay erodes importance of unaccessed memories after 14 idle days; consolidation merges cos>0.92 same-type pairs. **Phase 5:** the vector leg delegates to a `VectorIndexPort` — local cosine (default) or pgvector ANN (auto-activates on Postgres with the `vector` extension; HNSW index + BEFORE-INSERT trigger keeps `memories_vec` in sync from the TEXT embedding). Embeddings come from a pluggable provider (deterministic 128-d hash default, OpenAI-compat `/embeddings` via `OPENAI_EMBED_*`). Every write extracts person/org/tech/url/topic entities into the graph (`memory_entities` + `memory -[mentions]-> entity` links); every execution opens a working-memory window (pinned retrieved memories + bounded step facts) that feeds the synthesis prompt and the trace viewer.
+```
+TEXT (⌘K palette / JARVIS surface) ─┐
+VOICE (browser SpeechRecognition →  ├─→ POST /api/command → COMMAND CENTER
+        same transcript as text)    │       (routeCommand: intents → agent
+UI actions (widget buttons) ────────┤        executions via Hermes + tools)
+AUTOMATION (cron/event/webhook) ────┤
+INTEGRATION events / flow nodes ────┘
+                                              ↓
+                                        AGENT RUNTIME
+```
 
-**Agent Runtime** — fire-and-forget async state machine per execution with an in-process control map (pause/stop/approval waiters). States: idle→thinking→planning→executing→(waiting/paused/approval_required)→completed/failed/cancelled. Approval gate suspends the promise; the API decision resolves it (or the timeout fails the step safely → observation, not crash).
+Voice is purely an input modality: the transcript fills the same command input and submits `POST /api/command` after human review — approvals, autonomy gates, and the full runtime pipeline apply identically.
 
-**Tool Runtime** — 12 tools with schema/risk/scope. `evaluateGate`: toolset membership → scope → required-arg check → risk×autonomy policy (L-table). High-risk always human-approved (even L4). File tools jailed to `data/sandbox/` with path-escape checks.
+## 4. Subsystems
 
-**Skills** — ordered steps of {tool|model|skill} — composable, versioned, categorized (skill tree). Executed inside agent executions via the runtime's step machinery.
+**Model Gateway** — `ModelRouter.candidates()`: healthy providers → agent preference → capability → priority desc, cost asc; tries up to 4 candidates with automatic fallback; every attempt is a Generation row (tokens, latency, cost). Streaming (`generateStream`) feeds a throttled SSE token pump with AbortController cancellation. The builtin provider is the never-fails floor (deterministic planner/reasoner — honest label: not an LLM).
 
-**Event Bus** — 23 event types; every emit persists to `events` + publishes over BrokerPort (SSE taps it; future flows/automations subscribe the same way).
+**Memory** — 7 types; retrieval score = 0.40·keyword + 0.25·vector + 0.15·recency + 0.15·importance + 0.05·access. Duplicates reinforce; decay erodes idle importance; consolidation merges cos>0.92 pairs. Writes extract person/org/tech/url/topic entities into the graph; executions open working-memory windows (pinned memories + bounded step facts) that feed synthesis and are visible in the trace viewer. Vector leg delegates to `VectorIndexPort` (pgvector ANN auto-activates on Postgres with the `vector` extension; embeddings pluggable via `OPENAI_EMBED_*`).
 
-**Knowledge graph** — `entities` (kind:id → title/subtitle/meta, auto-synced by every store write) + `links` (typed relations). Links Explorer traverses both directions.
+**Knowledge graph** — `entities` (auto-synced on every store write) + `links` (explicit kernel relations + derived `co_occurs_with` from shared memories; idempotent derivation at boot and on demand). Snapshot/neighborhood APIs feed the Links Explorer and universal search.
 
-## 4. Data model
+**Agent Runtime** — fire-and-forget async state machine per execution with in-process control (pause/stop/approval waiters, abort controllers). States: idle→thinking→planning→executing→(waiting/paused/approval_required)→completed/failed/cancelled. Approvals suspend a promise; decisions or timeouts resolve them. Crash recovery marks orphans `interrupted` (resumable); per-step retry with backoff.
 
-28 tables: users, sessions, model_providers, models, agents, executions, generations, memories, entities, links, projects, sprints, tasks, task_dependencies, skills, tool_executions, events, audit_logs, approvals, notifications, schema_migrations (+ indexes). See `sql/001_kernel.sql`.
+**Flows** — directed node graphs (trigger/agent/skill/tool/condition/branch/loop/wait/approval) walked from the trigger with a checkpoint after every node (context-variable store, template resolution, cycle-safe validation). Same control semantics as the runtime: pause/stop/recover.
 
-## 5. Extension points (§37)
+**Automations** — cron (5-field parser with catch-up), event-substring, and webhook (constant-time token) triggers dispatching flows or agent executions, gated by per-automation autonomy policy; every fire lands in `automation_runs`. Deadline sweeps emit overdue/due-soon/missed-milestone alerts through a dedupe ledger.
+
+**Integrations** — GitHub/Gmail/Slack adapters behind `IntegrationPort`; token or OAuth flows (one-time CSRF state rows); credentials sealed in the vault (AES-256-GCM, 0600 key file). External events bridge onto the bus as `integration.event`.
+
+**Notifications** — in-app rows + browser Web Push (RFC 8291/8292, zero deps): VAPID P-256 keys, ES256 JWT, aes128gcm payloads; per-user channel prefs (priority threshold + categories) gate the fan-out; gone endpoints pruned.
+
+**Supervision (Phase 12)** — `GET /api/mobile/briefing` (status/agents/tasks/approvals/events/counts) and `POST /api/emergency-stop`: cancels every non-terminal execution (children cascade), cancels flow runs, pauses automations; audit + `system.emergency_stop` event + urgent notification; idempotent.
+
+**Realtime** — `GET /api/stream` (SSE): replays the last 50 events, then subscribes to the broker channel; volatile token events bypass the cursor; 15s pings; clean unsubscribe on close. The UI auto-reconnects via EventSource.
+
+## 5. Data model
+
+41 tables across `sql/001–010`: users, sessions, model_providers, models, agents, executions, generations, memories, memory_entities, entities, links, projects, sprints, tasks, task_dependencies, milestones, deadline_alerts, skills, skill_versions, tool_executions, events, audit_logs, approvals, notifications, notification_prefs, push_subscriptions, dashboard_layouts, agent_messages, flows, flow_runs, automations, automation_runs, integrations, oauth_states, integration_events, working_memory, schema_migrations (+ indexes).
+
+## 6. Web application
+
+Next.js App Router, single global token stylesheet (dark/light), shared Shell (rail nav, ⌘K command palette, approvals band, notifications, SSE ticker). The home page is the **JARVIS cockpit** (central core state machine, agent satellites, context/event/attention panels, command surface with optional voice) with the Phase 10 configurable widget grid preserved behind a toggle. `/mobile` is a standalone installable supervisor PWA. All pages render live API data; the Links Explorer is a zero-dependency canvas force simulation.
+
+## 7. Extension points
 
 - Add a provider → implement `ModelProviderPort`, register in `main.ts`
 - Add a tool → `ToolDef` in `modules/tools.ts` (risk/scope/schema required)
-- Add an integration → implement `IntegrationPort`, register into the registry
-- Add a flow/automation (Phases 7–8) → subscribe to BrokerPort channels; events are already typed
-- Replace memory retrieval → swap `similarity()` internals for pgvector; callers unchanged
+- Add an integration → implement `ServiceAdapter`, register in `IntegrationService`
+- Add a widget → `WIDGET_REGISTRY` in `modules/notify.ts` + renderer in the home page
+- Swap drivers → set `DATABASE_URL` / `REDIS_URL`; no code changes
 
-## 6. Honest boundaries (what v0.1 does NOT do)
+## 8. Operational boundaries (honest limits)
 
-- No Gmail/GitHub/Slack adapters yet — the port + registry exist, the command center says so explicitly rather than faking a connection
-- No cron automations or visual flow builder yet (Phases 8/7) — the event bus and step machinery they build on are live
-- `shell.run` executes through bash with a timeout in the sandbox dir, but is disabled by default and approval-gated; it is a dev convenience, not a hardened sandbox
-- SSE requires the sticky local broker for cross-process fan-out (Redis broker when scaling)
-- Multi-user RBAC is single-user + sessions in v0.1; the permission scopes vocabulary is in place
+- Login throttle + automation ticker are in-process — single-node designs; Redis broker when scaling
+- `http.fetch` does not block private-IP ranges (trusted-agent use, not multi-tenant hosting)
+- Voice input requires a browser with SpeechRecognition; there is no speech synthesis
+- SSE fan-out beyond one process requires the Redis broker
+- No FK constraints in SQL (app-enforced relationships) — deliberate for the dual-dialect constraint

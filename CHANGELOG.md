@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.1 — Finalization, hardening & release readiness (2026-09-08)
+
+### Security
+- **Login throttling**: per-username+IP sliding window — 5 failures in 5 min → 10-minute lockout (429). In-process by design for single-node; documented Redis path for scale.
+- **Dependency audit swept to zero**: 9 vulnerabilities (fastify ≤5.12.0, find-my-way, postcss, vite/vitest chain, esbuild) fixed via `npm audit fix --force` — fastify 5.12.3, vitest 5.0.0, Next 16.3.4. Full suite + all three production builds verified on the new majors.
+
+### Build / packaging
+- **Dockerfile now ships `apps/web/public`** — the PWA manifest, service worker, and icon were silently missing from production images (browser push + installability were broken in Docker).
+- **Root `npm run build` now includes the web production build** (was contracts + api only).
+
+### Cleanup
+- Removed dead `apps/web/src/lib/jarvis-store.tsx` (provider written, never mounted), stray `output/enhanced-portrait.jpg`, empty `docs/` dir.
+- `.env.example` now documents every Phase 5–12 variable: `OPENAI_EMBED_*`, `INTEGRATION_VAULT_KEY`, `VAPID_*`, `AGENTIC_SKILLS_DIR`.
+
+### Documentation
+- **README rewritten for v0.12.0**: current subsystem map (all phases live), JARVIS cockpit + mobile supervisor, converged command architecture, honest boundaries, production paths.
+- **ARCHITECTURE.md rewritten**: 41-table data model, command-convergence diagram (text/voice/UI/automation → one runtime), per-subsystem reality, operational limits.
+
+### Verified in this pass
+- Migrations: fresh-DB boot applies all 10 idempotently (41 tables); re-run is a no-op.
+- `npm test` → 149/149 · `tsc` → 0 errors (api + web) · production builds green (contracts, api, web/Next 16).
+- No secrets committed (`git ls-files` clean), no key/secret fields in any API response surface, OAuth state one-time + CSRF-checked, webhook tokens constant-time compared, vault keys 0600.
+
 ## 0.12.0 — Desktop/Mobile supervision (Phase 12, 2026-09-07)
 
 ### Added

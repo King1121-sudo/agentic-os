@@ -45,7 +45,7 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-/* ── layout shell ─────────────────────────────────────────────── */
+/* -- layout shell ----------------------------------------------- */
 .shell { display: grid; grid-template-columns: 52px 1fr; min-height: 100vh; }
 .rail {
   border-right: 1px solid var(--border);
@@ -88,7 +88,7 @@ a:hover { text-decoration: underline; }
 
 .content { padding: 18px; max-width: 1400px; width: 100%; }
 
-/* ── panels & cards ───────────────────────────────────────────── */
+/* -- panels & cards --------------------------------------------- */
 .grid { display: grid; gap: 14px; }
 .cols-2 { grid-template-columns: 1fr 1fr; }
 .cols-3 { grid-template-columns: 1fr 1fr 1fr; }
@@ -104,7 +104,7 @@ a:hover { text-decoration: underline; }
 }
 .card h3 .count { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 0 7px; }
 
-/* ── primitives ──────────────────────────────────────────────── */
+/* -- primitives ------------------------------------------------ */
 .row { display: flex; align-items: center; gap: 8px; }
 .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .wrap { flex-wrap: wrap; }
@@ -161,7 +161,7 @@ label { font-size: 11.5px; color: var(--fg-dim); display: block; margin-bottom: 
 
 .empty { color: var(--fg-faint); font-size: 12.5px; padding: 14px 4px; text-align: center; font-style: italic; }
 
-/* ── command palette ──────────────────────────────────────────── */
+/* -- command palette -------------------------------------------- */
 .palette-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 100;
   display: flex; justify-content: center; padding-top: 14vh; backdrop-filter: blur(2px);
@@ -178,7 +178,7 @@ label { font-size: 11.5px; color: var(--fg-dim); display: block; margin-bottom: 
 .palette .results .item { padding: 9px 12px; }
 .palette .hint { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 11px; display: flex; justify-content: space-between; }
 
-/* ── activity feed ───────────────────────────────────────────── */
+/* -- activity feed --------------------------------------------- */
 .ev { display: flex; gap: 10px; padding: 6px 10px; border-radius: 7px; align-items: baseline; }
 .ev:hover { background: var(--bg-hover); }
 .ev .t { font-family: var(--mono); font-size: 10.5px; color: var(--fg-faint); flex-shrink: 0; width: 58px; }
@@ -186,10 +186,11 @@ label { font-size: 11.5px; color: var(--fg-dim); display: block; margin-bottom: 
 .ev .d { color: var(--fg-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .k-agent\.started { color: var(--green); } .k-agent\.failed { color: var(--red); }
 .k-tool\.executed { color: var(--accent); } .k-tool\.denied { color: var(--red); }
-.k-approval\.requested { color: var(--amber); } .k-memory\.* { color: var(--purple); }
+.k-approval\.requested { color: var(--amber); }
+.ev .k[class*="k-memory"] { color: var(--purple); }
 .k-generation\.completed { color: var(--purple); }
 
-/* ── trace timeline ──────────────────────────────────────────── */
+/* -- trace timeline -------------------------------------------- */
 .trace { border-left: 2px solid var(--border); margin-left: 8px; padding-left: 16px; display: flex; flex-direction: column; gap: 0; }
 .trace .step { position: relative; padding: 7px 0; }
 .trace .step::before {
@@ -231,7 +232,7 @@ table.tbl tr:hover td { background: var(--bg-hover); }
 ::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 5px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ══ JARVIS COMMAND CENTER ═══════════════════════════════════════
+/* == JARVIS COMMAND CENTER =======================================
    Experience layer over the kernel (plan: 2026-09-06 jarvis-os-visual-architecture).
    Semantic-only animation; transform/opacity only; reduced-motion safe. */
 
@@ -264,7 +265,7 @@ html[data-theme='light'] {
   --jarvis-line-soft: rgba(13, 148, 136, 0.09);
 }
 
-/* ── cockpit layout ── */
+/* -- cockpit layout -- */
 .jarvis-cockpit { position: relative; }
 .jarvis-cockpit-grid {
   display: grid;
@@ -284,7 +285,7 @@ html[data-theme='light'] {
   .jarvis-right-bank { flex-direction: column; }
 }
 
-/* ── HUD panel primitive ── */
+/* -- HUD panel primitive -- */
 .jarvis-panel {
   background: var(--jarvis-panel);
   border: 1px solid var(--jarvis-line);
@@ -324,7 +325,7 @@ html[data-theme='light'] {
   border: 1px solid var(--jarvis-line); border-radius: 9px; padding: 0 7px;
 }
 
-/* ── status dots ── */
+/* -- status dots -- */
 .jarvis-status-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--fg-dim); }
 .jarvis-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--fg-faint); }
 .jarvis-status-dot.is-live { background: var(--jarvis-green); box-shadow: 0 0 6px rgba(46, 230, 168, 0.55); }
@@ -336,7 +337,7 @@ html[data-theme='light'] {
 .jarvis-status-dot.is-idle { background: var(--fg-faint); }
 @keyframes jarvisPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-/* ── metrics ── */
+/* -- metrics -- */
 .jarvis-metric {
   display: flex; flex-direction: column; gap: 1px;
   border: 1px solid var(--jarvis-line-soft); border-radius: 9px;
@@ -349,7 +350,7 @@ html[data-theme='light'] {
 .jarvis-metric.tone-danger .jarvis-metric-value { color: var(--jarvis-danger); }
 .jarvis-metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
 
-/* ── the core ── */
+/* -- the core -- */
 .jarvis-core {
   display: flex; flex-direction: column; align-items: center;
   padding: 26px 20px 18px; position: relative;
@@ -425,7 +426,7 @@ html[data-theme='light'] {
   border: 1px solid var(--jarvis-line-soft); border-radius: 999px; padding: 2px 9px;
 }
 
-/* ── command surface ── */
+/* -- command surface -- */
 .jarvis-command {
   margin-top: 16px; border: 1px solid var(--jarvis-line); border-radius: 12px;
   background: var(--jarvis-panel); padding: 12px 14px;
@@ -447,7 +448,7 @@ html[data-theme='light'] {
   border: 1px solid var(--jarvis-line-soft); border-radius: 8px; font-size: 12px;
 }
 
-/* ── cockpit lists ── */
+/* -- cockpit lists -- */
 .jarvis-list { display: flex; flex-direction: column; gap: 2px; }
 .jarvis-row-link {
   display: flex; align-items: center; gap: 8px; padding: 6px 8px;
@@ -470,7 +471,7 @@ html[data-theme='light'] {
   z-index: 1;
 }
 
-/* ── HUD strip ── */
+/* -- HUD strip -- */
 .jarvis-hud-strip {
   display: flex; gap: 10px; align-items: stretch; margin-top: 16px; flex-wrap: wrap;
 }
@@ -482,7 +483,7 @@ html[data-theme='light'] {
   .jarvis-core-nucleus, .ring-a, .ring-b, .ring-c { animation: none !important; }
 }
 
-/* ══ MOBILE SUPERVISOR (Phase 12) ════════════════════════════════════════ */
+/* == MOBILE SUPERVISOR (Phase 12) ======================================== */
 .mobile-supervisor {
   max-width: 520px; margin: 0 auto;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom));

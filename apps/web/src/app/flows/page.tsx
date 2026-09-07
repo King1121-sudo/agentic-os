@@ -8,7 +8,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { api, post, patch, usePoll, fmtAgo } from '@/lib/api';
 
-// ─── node kind styling ──────────────────────────────────────────────────────
+// --- node kind styling ------------------------------------------------------
 const KIND_META: Record<string, { icon: string; color: string; hint: string }> = {
   trigger:    { icon: '⚡', color: 'var(--amber)',      hint: 'Flow entry point (run input)' },
   agent:      { icon: 'Ⓢ', color: 'var(--accent)',      hint: 'Run an agent to completion' },
@@ -58,7 +58,7 @@ function FlowNodeView({ data, selected }: { data: Record<string, unknown>; selec
 
 const nodeTypes = { flow: FlowNodeView };
 
-// ─── node config editor ─────────────────────────────────────────────────────
+// --- node config editor -----------------------------------------------------
 const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder?: string }[]> = {
   trigger:  [{ key: 'defaults', label: 'defaults (json)', placeholder: '{"input": "hello"}' }],
   agent:    [{ key: 'agent_name', label: 'agent', placeholder: 'Hermes' }, { key: 'input', label: 'input template', placeholder: 'Summarize ${ctx.content}' }],
@@ -79,7 +79,7 @@ export default function FlowsPage() {
   const activeRun = (runs ?? []).find(r => ['running', 'waiting', 'paused', 'interrupted'].includes(r.status)) ?? null;
   const activeRunLive = usePoll(() => activeRun ? api(`/api/flow-runs/${activeRun.id}`) : Promise.resolve(null), 2000, [activeRun?.id]) as any | null;
 
-  // ── builder canvas state ──
+  // -- builder canvas state --
   const [nodes, setNodes] = useState<Node<Record<string, unknown>>[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [name, setName] = useState('New Flow');
@@ -141,7 +141,7 @@ export default function FlowsPage() {
     }));
   };
 
-  // ── save ──
+  // -- save --
   async function save() {
     const payload = {
       name,

@@ -10,7 +10,7 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "build": "npm run build -w packages/contracts && npm run build -w apps/api",
+    "build": "npm run build -w packages/contracts && npm run build -w apps/api && npm run build -w apps/web",
     "dev:api": "npm run build -w packages/contracts && npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "start:api": "npm run start -w apps/api",

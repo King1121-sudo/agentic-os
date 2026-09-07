@@ -1,5 +1,7 @@
 # Agentic OS — Roadmap
 
+> **Status: Phases 1–12 complete + finalization pass.** All milestones below are shipped and verified (149 tests, typecheck clean, production builds green, migrations idempotent on fresh DBs). See `CHANGELOG.md` for per-phase history.
+
 ## Milestone 1 — Kernel v0.1 ✅ (this release)
 
 Per §44 of the build spec:

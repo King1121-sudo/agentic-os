@@ -173,7 +173,7 @@ export default function Home() {
   );
 }
 
-// ─── the widget SDK: every widget is a pure function of dashboard data ──────
+// --- the widget SDK: every widget is a pure function of dashboard data ------
 
 function WidgetCard({ kind, ...props }: { kind: string } & ReturnType<typeof buildWidgetProps>) {
   switch (kind) {
@@ -371,7 +371,7 @@ function AutomationsWidget({ autos }: WProps) {
   );
 }
 
-// ─── Phase 10: browser push opt-in (lives in the notifications widget) ──────
+// --- Phase 10: browser push opt-in (lives in the notifications widget) ------
 function PushOptIn() {
   const [state, setState] = useState<'idle' | 'asking' | 'on' | 'unsupported' | 'denied'>('idle');
   const [prefs, setPrefs] = useState<any>(null);
@@ -445,7 +445,7 @@ function urlB64ToUint8(base64: string): Uint8Array<ArrayBuffer> {
   return arr;
 }
 
-// ─── shared event row (unchanged from the original dashboard) ───────────────
+// --- shared event row (unchanged from the original dashboard) ---------------
 function EventRow({ ev }: { ev: OsEvent }) {
   const colorFor = (t: string) => {
     if (t.startsWith('agent')) return t.includes('fail') ? 'var(--red)' : t.includes('completed') ? 'var(--green)' : 'var(--accent)';

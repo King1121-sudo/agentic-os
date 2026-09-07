@@ -32,7 +32,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
-  // ── live event stream ──
+  // -- live event stream --
   const onEvent = useCallback((ev: OsEvent) => {
     setEvents(prev => [ev, ...prev].slice(0, 60));
     if (ev.type === 'notification.created' || ev.type === 'approval.requested') {
@@ -53,7 +53,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
   useEffect(() => { refreshNotifs(); }, [refreshNotifs]);
 
-  // ── keyboard shortcuts ──
+  // -- keyboard shortcuts --
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
@@ -182,7 +182,7 @@ async function decide(id: string, d: 'approve' | 'deny', refresh: () => void) {
   refresh();
 }
 
-// ─── command palette / command center ──────────────────────────────────────
+// --- command palette / command center --------------------------------------
 function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: (msg?: string) => void }) {
   const router = useRouter();
   const [q, setQ] = useState('');

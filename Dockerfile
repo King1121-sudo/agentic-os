@@ -13,7 +13,7 @@ RUN npm install --no-audit --no-fund
 COPY packages/contracts/src packages/contracts/src
 COPY apps/api/src apps/api/src
 COPY apps/web/src apps/web/src
-RUN mkdir -p apps/web/public
+COPY apps/web/public apps/web/public
 
 RUN npm run build -w packages/contracts \
  && npx tsc -p apps/api/tsconfig.json \

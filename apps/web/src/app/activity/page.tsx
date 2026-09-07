@@ -1,10 +1,18 @@
 'use client';
 import Shell from '@/components/Shell';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { api, post, usePoll, fmtTime } from '@/lib/api';
 
 export default function ActivityPage() {
+  return (
+    <Suspense fallback={<div className="empty">Loading activity…</div>}>
+      <ActivityView />
+    </Suspense>
+  );
+}
+
+function ActivityView() {
   const events = usePoll(() => api('/api/events?limit=150'), 3000);
   const [selectedExec, setSelectedExec] = useState<string | null>(null);
   const params = useSearchParams();
@@ -53,7 +61,7 @@ function summarizeEv(e: any): string {
   return JSON.stringify(d).slice(0, 110);
 }
 
-// ─── execution trace viewer (§5: what happened, why, with what) ────────────
+// --- execution trace viewer (§5: what happened, why, with what) ------------
 function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void }) {
   const exec = usePoll(() => api(`/api/executions/${execId}`), 2000, [execId]);
   const [audit, setAudit] = useState<any[]>([]);

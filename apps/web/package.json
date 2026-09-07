@@ -10,9 +10,11 @@
   "dependencies": {
     "@agentic/contracts": "*",
     "@xyflow/react": "^12.11.6",
-    "next": "^15.0.0",
+    "fastify": "5.12.3",
+    "next": "^16.3.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "vitest": "5.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
