@@ -4,6 +4,13 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Agentic OS',
   description: 'AI-native operating environment',
+  manifest: '/manifest.webmanifest',
+};
+
+export const viewport = {
+  themeColor: '#0d9488',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -25,6 +25,7 @@ import { AutomationEngine } from './modules/automations-engine';
 import { IntegrationService } from './modules/integrations-service';
 import * as notify from './modules/notify';
 import * as graph from './modules/graph';
+import { mobileBriefing, createEmergencyStop } from './modules/supervision';
 import { loadSkillsFromDir, upsertSkillVersioned, skillMetrics, skillVersions } from './modules/skills';
 import { config } from './config';
 import { hashPassword, verifyPassword } from './auth.util';
@@ -1231,6 +1232,15 @@ export function buildApi(deps: ApiDeps) {
     }
     return null;
   }
+
+  // ─── Phase 12: mobile supervision ──────────────────────────────────────────
+  app.get('/api/mobile/briefing', async (req: any) => mobileBriefing(db, req.user.id));
+
+  app.post('/api/emergency-stop', async (req: any) => {
+    const reason = String((req.body ?? {}).reason ?? 'triggered from supervision surface');
+    const es = createEmergencyStop({ db, bus, runtime, flows: flowEngine });
+    return es.execute(reason, req.user.id);
+  });
 
   // ─── dashboard (home widgets data) ────────────────────────────────────────
   app.get('/api/dashboard', async (req: any) => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0 — Desktop/Mobile supervision (Phase 12, 2026-09-07)
+
+### Added
+- **Mobile supervision app** (`/mobile`): a phone-first standalone supervisor surface — live briefing (status escalation nominal/action_required/critical), running-work stat tiles, one-tap Approve/Deny for the full pending-approval queue, agent roster, open tasks with project names, recent events, and a two-step-confirm **emergency stop** with post-stop report. Installable PWA (manifest + standalone display + theme color); OS notifications ride the existing Phase 10 Web Push channel.
+- **Briefing API** (`GET /api/mobile/briefing`): render-ready supervision payload — status, agents, actionable tasks, approvals, summarized events, running-work counts.
+- **Emergency stop** (`POST /api/emergency-stop`, `modules/supervision.ts`): the kill switch — cascades through every non-terminal execution (delegated children + in-flight generation aborts included, execution rows forced terminal synchronously), cancels every running/waiting/paused/interrupted flow run, pauses all enabled automations until re-armed. Audit row + `system.emergency_stop` bus event (new contract event type) + urgent supervisor notification; idempotent by construction. Live-verified against a genuinely running flow run.
+- 6 new tests (149 total): briefing shape/escalation/projection, emergency-stop cascade + terminal assertions, idempotence, audit + event persistence.
+
 ## 0.11.0 — Knowledge graph (Phase 11, 2026-09-06)
 
 ### Added

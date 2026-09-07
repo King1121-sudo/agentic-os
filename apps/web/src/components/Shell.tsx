@@ -97,7 +97,7 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
       <div className="main">
         <header className="topbar">
           <span className="title">{activeLabel}</span>
-          <span className="crumb">Agentic OS v0.11</span>
+          <span className="crumb">Agentic OS v0.12</span>
           <div style={{ flex: 1 }} />
           <div className={`live ${connected ? '' : 'off'}`}>
             <span className="pulse" /> {connected ? 'LIVE' : 'OFFLINE'}

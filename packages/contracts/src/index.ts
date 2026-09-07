@@ -76,7 +76,9 @@ export type EventType =
   | 'integration.connected' | 'integration.disconnected' | 'integration.failed'
   | 'integration.oauth.started'
   // Phase 10: notifications + widgets
-  | 'notification.push.sent' | 'widget.layout.updated';
+  | 'notification.push.sent' | 'widget.layout.updated'
+  // Phase 12: supervision — mobile emergency stop cascade
+  | 'system.emergency_stop';
 
 export interface OsEvent {
   id: Uuid;

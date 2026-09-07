@@ -1,0 +1,14 @@
+{
+  "name": "Agentic OS — Supervisor",
+  "short_name": "Agentic OS",
+  "description": "AI-native operating environment — mobile supervision: approvals, briefings, emergency stop",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05070a",
+  "theme_color": "#0d9488",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
