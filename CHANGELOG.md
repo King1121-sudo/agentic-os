@@ -5,6 +5,7 @@
 ### Security
 - **Login throttling**: per-username+IP sliding window — 5 failures in 5 min → 10-minute lockout (429). In-process by design for single-node; documented Redis path for scale.
 - **Dependency audit swept to zero**: 9 vulnerabilities (fastify ≤5.12.0, find-my-way, postcss, vite/vitest chain, esbuild) fixed via `npm audit fix --force` — fastify 5.12.3, vitest 5.0.0, Next 16.3.4. Full suite + all three production builds verified on the new majors.
+- **VAPID JWT signature bug fixed (real since Phase 10)**: the DER fast path for 72-byte ECDSA signatures sliced `r` at byte 8 instead of byte 5, corrupting the ES256 JWT whenever both integers needed zero-padding (~25% of signatures — real push services would have rejected those sends). Now signs with `dsaEncoding: 'ieee-p1363'` (raw r||s, no DER parsing) with a correct universal DER parser as fallback; the test loops 40 iterations to cover all DER shapes. Caught because the "flaky" test failure repeated across runs.
 
 ### Build / packaging
 - **Dockerfile now ships `apps/web/public`** — the PWA manifest, service worker, and icon were silently missing from production images (browser push + installability were broken in Docker).
