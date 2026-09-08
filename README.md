@@ -57,7 +57,7 @@ With no `.env` the kernel runs on the **builtin deterministic provider** (zero n
 | Projects / sprints / dependencies / milestones / rollups | `modules/projects.ts` |
 | Flows (visual graph engine, checkpoints, pause/resume/recovery) | `modules/flows.ts` |
 | Automations (cron / event / webhook triggers, policy gates) | `modules/automations-engine.ts` |
-| Integrations (GitHub / Gmail / Slack adapters, OAuth, secret vault) | `modules/integrations-service.ts`, `vault.ts` |
+| **Integration platform** (7 providers, central OAuth + PKCE + refresh, capability grants, webhook gateway, sync engine, vault) | `modules/integrations/` — see `docs/integrations.md` |
 | Notifications (in-app + Web Push RFC 8291/8292, VAPID) | `modules/notify.ts` |
 | Knowledge graph (co-occurrence derivation, snapshot, neighborhoods) | `modules/graph.ts` |
 | Mobile supervision (briefing API, emergency stop) | `modules/supervision.ts` |

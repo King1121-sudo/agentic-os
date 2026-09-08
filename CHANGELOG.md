@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.13.0 — Universal Integration Platform (2026-09-08)
+
+### Replaced
+- **Phase 9's three one-off integrations → a provider-agnostic platform** (`modules/integrations/`, 7 initial providers). Adding a provider is now: one manifest + one adapter + one registration line — the engine (service, OAuth, webhooks, sync, rate limits) has zero provider knowledge.
+
+### Added
+- **7 providers**: GitHub (OAuth + PAT), Gmail + YouTube (shared Google OAuth identity — one login, both services; Calendar/Drive/Contacts will reuse it), Slack (OAuth + bot token), Telegram (official Bot API — the non-OAuth proof), WhatsApp (official Meta Cloud API only), Instagram (official Meta Graph, professional accounts).
+- **Central OAuthManager** (`integrations/oauth.ts`): ONE authorization-code implementation — state generation/validation (CSRF, one-time, 10-min expiry), PKCE S256 where the provider requires it (Google, Instagram), token exchange, refresh-token storage, expiry tracking, automatic refresh on the pre-call path, revoked-token → `reauth_required`, multi-account by provider+account.
+- **Capability-based permissions**: every provider declares granular capabilities (`gmail.send`, `github.issue.write`, `slack.message.write`, `whatsapp.send`…); connections store explicit grants; every execution path — UI, API, agent tools — enforces the grant before touching credentials. Unknown capabilities rejected at connect time (before any network call).
+- **Webhook gateway** (`integrations/webhooks.ts`): signature verification (HMAC-SHA256 + Slack v0 timestamp scheme, constant-time), replay protection (source-event dedup), normalization, bus bridge — `POST /api/integrations/:id/webhook`.
+- **Sync engine** (`integrations/sync.ts`): cursor-based incremental polling per connection, checkpointed in `integration_sync_state`, per-provider intervals (≥60s floor), Telegram getUpdates offset / GitHub notifications since-cursors.
+- **Rate limiting** (`integrations/rate-limit.ts`): per provider+connection token buckets, Retry-After-aware backoff — one provider can never exhaust the OS.
+- **Agent tools** (`integrations/tools.ts`): `integration.list` + one `<provider>.action` tool per provider, generated from manifests, capability-gated, fully audited (deep secret redaction on every audit/event path).
+- **Manifest-driven UI**: the Integrations page renders entirely from the provider catalog — auth methods per provider (never a generic token field), config status (`configured` / `not_configured` / `misconfigured`), capability chips, multi-account connections, health, API-restriction notes.
+- **Normalized event model**: `{id, provider, connection_id, event_type, actor, timestamp, resource, payload, capabilities_required, source_event_id, metadata}` bridged onto the OS bus.
+- Migration `011`: multi-account `integration_connections` (label, identity_key, token expiry, last success/error), webhook dedup, sync state, PKCE columns on oauth_states, backfill from the Phase-9 table.
+- 21 rewritten platform tests (151 total): OAuth state/PKCE/exchange/refresh/expiry, capability enforcement + unauthorized-call denial, multi-account lifecycle, encrypted storage + tamper detection, secret redaction, webhook signature + replay, rate limiting, sync cursors, adapter probes against mocked HTTP, provider catalog shape.
+
+### Fixed
+- **The "OAuth (unconfigured)" bug**: config status was computed from a hardcoded `{github, gmail}` env-name map — every other OAuth provider always showed unconfigured, and Gmail's spec-correct `GOOGLE_*` env names weren't in the map. Status now resolves from each provider's declared env names (`configured`/`not_configured`/`misconfigured`), and no secret value ever crosses the API.
+
 ## 0.12.1 — Finalization, hardening & release readiness (2026-09-08)
 
 ### Security

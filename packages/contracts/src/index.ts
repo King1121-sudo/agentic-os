@@ -663,15 +663,19 @@ export const AutomationUpsertInput = z.object({
 export const AutomationToggleInput = z.object({
   enabled: z.boolean(),
 });
-/** Phase 9: connect an integration with a personal access token / bot token. */
+/** Integration platform: connect with a provider-native token (PAT / bot token /
+ *  cloud access token). integration_id accepts any registered provider. */
 export const IntegrationConnectTokenInput = z.object({
-  integration_id: z.enum(['github', 'gmail', 'slack']),
+  integration_id: z.string().min(2).max(40),
   token: z.string().min(8).max(400),
-  scopes: z.array(z.string().max(60)).optional(),   // defaults to the adapter's required set
+  scopes: z.array(z.string().max(120)).optional(),     // provider scopes (informational)
+  capabilities: z.array(z.string().max(80)).optional(), // platform capability ids to grant
+  label: z.string().max(80).optional(),
 });
-/** Phase 9: complete OAuth with the authorization code (from the callback). */
+/** Integration platform: complete OAuth with the authorization code. */
 export const IntegrationConnectOAuthInput = z.object({
-  state: z.string().min(8).max(120),
+  integration_id: z.string().min(2).max(40),
+  state: z.string().min(8).max(200),
   code: z.string().min(4).max(400),
 });
 /** Phase 10: save a dashboard layout (the widget grid). */

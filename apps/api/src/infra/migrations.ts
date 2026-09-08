@@ -17,6 +17,7 @@ const MIGRATIONS: { id: string; file: string }[] = [
   { id: '008_automations', file: '008_automations.sql' },
   { id: '009_integrations', file: '009_integrations.sql' },
   { id: '010_widgets_push', file: '010_widgets_push.sql' },
+  { id: '011_integration_platform', file: '011_integration_platform.sql' },
 ];
 
 export async function runMigrations(db: DataPort): Promise<string[]> {

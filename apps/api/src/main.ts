@@ -16,7 +16,6 @@ import { ToolRegistry, createBuiltinTools, setRuntimeRef } from './modules/tools
 import { AgentRuntime } from './modules/runtime';
 import { FlowEngine } from './modules/flows';
 import { AutomationEngine } from './modules/automations-engine';
-import { IntegrationService } from './modules/integrations-service';
 import { startNotificationRouter } from './modules/notify';
 import { deriveCoOccurrenceLinks } from './modules/graph';
 import { buildApi } from './app';
@@ -25,6 +24,7 @@ import { createVectorIndex } from './modules/vector';
 import { setVectorIndex } from './modules/memory';
 import { backfillEntities } from './modules/entities';
 import { runDeadlineSweep } from './modules/automations';
+import { createIntegrationPlatform, createIntegrationTools, SyncEngine } from './modules/integrations';
 
 async function main() {
   console.log(`[boot] Agentic OS Kernel v${config.version} starting…`);
@@ -78,9 +78,18 @@ async function main() {
   const boot = await router.bootstrap();
   console.log(`[boot] providers: ${boot.providers.map((p: any) => `${p.id}=${p.status}(${p.models})`).join(' ')}`);
 
-  // 6) TOOLS
+  // 6a) INTEGRATION PLATFORM — created BEFORE tools (the tool generator walks
+  // the registered provider manifests)
+  const integrationsService = createIntegrationPlatform({ db, bus });
+  const integrationProviders = integrationsService.listProviders();
+  const providersOn = await db.query<any>("SELECT COUNT(*) AS n FROM integration_connections WHERE status = 'connected'").then(r => Number(r[0]?.n ?? 0)).catch(() => 0);
+  console.log(`[boot] integrations: ${integrationProviders.map((p: any) => p.id).join(', ')} providers registered${providersOn ? `, ${providersOn} connection(s)` : ''} — vault ${process.env.INTEGRATION_VAULT_KEY ? 'key from env' : 'auto-generated key file'}`);
+
+  // 6b) TOOLS
   const tools = new ToolRegistry();
   for (const t of createBuiltinTools(db)) tools.register(t);
+  // Integration platform tools — capability-gated, manifest-generated (Phase 16)
+  for (const t of createIntegrationTools(db, integrationsService)) tools.register(t);
 
   // 7) RUNTIME
   const runtime = new AgentRuntime(db, broker, bus, router, tools);
@@ -95,10 +104,10 @@ async function main() {
   const autoCount = Number((await db.query<any>('SELECT COUNT(*) AS n FROM automations WHERE enabled = 1'))[0]?.n ?? 0);
   console.log(`[boot] automations: ${autoCount} enabled (cron ticker + event subscriptions + webhook intake live)`);
 
-  // 7a-c) INTEGRATIONS (Phase 9) — GitHub/Gmail/Slack adapters + secret vault
-  const integrationsService = new IntegrationService({ db, bus });
-  const integrationsOn = Number((await db.query<any>("SELECT COUNT(*) AS n FROM integrations WHERE status = 'connected'"))[0]?.n ?? 0);
-  console.log(`[boot] integrations: ${integrationsService.listAdapters().map(a => a.id).join(', ')} adapters registered${integrationsOn ? `, ${integrationsOn} connected` : ''} — vault ${process.env.INTEGRATION_VAULT_KEY ? 'key from env' : 'auto-generated key file'}`);
+  // 7a-e) SYNC ENGINE (integration platform) — cursor polling per connection
+  const syncEngine = new SyncEngine({ db, bus, service: integrationsService });
+  await syncEngine.start();
+  console.log('[boot] integration sync engine: started (per-provider intervals, >= 60s floor)');
 
   // 7a-d) NOTIFICATION ROUTER (Phase 10) — in-app + browser push channels
   await startNotificationRouter({
