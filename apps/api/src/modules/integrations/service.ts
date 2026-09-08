@@ -156,15 +156,34 @@ export class IntegrationService {
     const adapter = this.requireAdapter(provider);
     const oauthMethod = adapter.manifest.authMethods.find(m => m.kind === 'oauth2');
     if (!oauthMethod) throw new Error(`${provider} does not support OAuth`);
-    const { tokens, userId: stateUser, requestedCapabilities, redirectTo } =
+    const { tokens, userId: stateUser, requestedCapabilities } =
       await oauthExchange(this.deps.db, adapter.manifest, oauthMethod, state, code);
     if (stateUser !== userId) throw new Error('OAuth state does not belong to this session');
-    void redirectTo;
     // probe to verify + resolve account (requirement 17: never trust config alone)
     const probe = await adapter.probeToken(tokens.access_token);
     const manifest = adapter.manifest;
+    // §9 SHARED GOOGLE IDENTITY: when the provider belongs to a family (google),
+    // ONE connection row per provider+account is created, but the FAMILY's
+    // credential is stored ONCE under the shared identity key — Gmail and
+    // YouTube connections resolve the same vault entry and the same refresh
+    // token. familyKey = 'google:<sub>'.
+    const family = oauthMethod.oauth?.sharedIdentity;
+    const familyKey = family && probe.identityKey ? probe.identityKey : null;
     const capabilities = requestedCapabilities.length ? requestedCapabilities : manifest.defaultCapabilities ?? [];
     const now = iso();
+
+    // §9: incremental auth — if a family credential already exists for this
+    // Google account, REUSE it (no second login) when it already covers this
+    // provider's needs; the new consent (include_granted_scopes) simply
+    // refreshed the shared token.
+    let familyVaultId: string | null = null;
+    if (familyKey) {
+      const existingFamily = await this.deps.db.query<any>(
+        'SELECT id FROM integration_connections WHERE identity_key = ? AND user_id = ? LIMIT 1',
+        [familyKey, userId]);
+      familyVaultId = existingFamily[0]?.id ?? null;
+    }
+
     // multi-account: if the same provider+account already exists, refresh it
     const existing = await this.deps.db.query<any>(
       'SELECT id FROM integration_connections WHERE provider = ? AND user_id = ? AND account_id = ?',
@@ -174,23 +193,62 @@ export class IntegrationService {
       connId = existing[0].id;
       await this.deps.db.run(
         `UPDATE integration_connections SET status = 'connected', auth_method = 'oauth2',
-          capabilities = ?, scopes = ?, token_expires_at = ?, updated_at = ? WHERE id = ?`,
-        [JSON.stringify(capabilities), JSON.stringify(tokens.scope), tokens.expires_at, now, connId]);
+          capabilities = ?, scopes = ?, token_expires_at = ?, identity_key = ?, updated_at = ? WHERE id = ?`,
+        [JSON.stringify(capabilities), JSON.stringify(tokens.scope), tokens.expires_at, familyKey, now, connId]);
     } else {
       connId = uuid();
       await this.deps.db.run(
         `INSERT INTO integration_connections
           (id, provider, user_id, label, account_id, identity_key, status, auth_method, capabilities, scopes, token_expires_at, created_at, updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [connId, provider, userId, null, probe.account, probe.identityKey ?? null, 'connected', 'oauth2',
+        [connId, provider, userId, null, probe.account, familyKey, 'connected', 'oauth2',
          JSON.stringify(capabilities), JSON.stringify(tokens.scope), tokens.expires_at, now, now]);
     }
-    await this.storeSecret(connId, 'token', tokens.access_token);
-    if (tokens.refresh_token) await this.storeSecret(connId, 'refresh_token', tokens.refresh_token);
+    // family credential: store once under the family vault row (or this row when
+    // it IS the first family member) — every Google service shares it
+    const vaultRow = familyVaultId ?? connId;
+    await this.storeSecret(vaultRow, 'token', tokens.access_token);
+    if (tokens.refresh_token) await this.storeSecret(vaultRow, 'refresh_token', tokens.refresh_token);
+    // when reusing an existing family row, this service row's credentialsFor()
+    // resolves through familyVaultId — record that on the connection
+    if (familyVaultId && familyVaultId !== connId) {
+      await this.storeSecret(connId, 'family_vault_id', familyVaultId);
+    }
     await this.deps.bus.emit('integration.connected',
       { provider, account: probe.account, capabilities },
       { actor_type: 'user', actor_id: userId, target_type: 'integration', target_id: connId });
-    return (await this.getConnection(connId))!;
+    const conn = (await this.getConnection(connId))!;
+    // §11: verify the connection can actually reach the provider API — a token
+    // exchange alone never marks CONNECTED. Verification failure → error state
+    // with the standard code (the user sees exactly what to fix).
+    if (adapter.verifyConnection) {
+      const verification = await adapter.verifyConnection({ accessToken: tokens.access_token });
+      if (!verification.ok) {
+        await this.deps.db.run(
+          "UPDATE integration_connections SET status = 'error', last_error = ?, last_error_at = ?, updated_at = ? WHERE id = ?",
+          [`${verification.code}: ${verification.detail}`, iso(), iso(), connId]);
+        return { ...conn, status: 'error' as const, last_error: `${verification.code}: ${verification.detail}` };
+      }
+    }
+    return conn;
+  }
+
+  /** §15 diagnostics — configuration state WITHOUT any secret values. */
+  async googleDiagnostics(): Promise<Record<string, unknown>> {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const base = (process.env.AGENTIC_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const checks: Record<string, unknown> = {
+      client_id: clientId ? 'configured' : 'missing',
+      client_secret: clientSecret ? 'configured' : 'missing',
+      redirect_uri: `${base}/api/integrations/google/oauth/callback`,
+      configured: !!(clientId && clientSecret),
+      status: clientId && clientSecret ? 'READY' : (clientId || clientSecret) ? 'MISCONFIGURED' : 'NOT_CONFIGURED',
+    };
+    const conns = await this.deps.db.query<any>(
+      "SELECT provider, status, account_id FROM integration_connections WHERE identity_key LIKE 'google:%' AND status = 'connected'");
+    checks.connected_accounts = conns.map(c => ({ provider: c.provider, account: c.account_id }));
+    return checks;
   }
 
   // ── disconnect / revoke ──
@@ -207,28 +265,47 @@ export class IntegrationService {
   }
 
   // ── credentials + refresh (the pre-call pipeline) ──
-  /** Live credentials for a connection: refreshes an expired OAuth token when a
-   *  refresh token exists; marks reauth_required when refresh fails. */
+  /** Live credentials for a connection: shared-family connections resolve the
+   *  FAMILY vault row (one Google token set for Gmail+YouTube+…); refreshes an
+   *  expired OAuth token when a refresh token exists; marks reauth_required
+   *  when refresh fails. */
   async credentialsFor(connectionId: string): Promise<AdapterCredentials> {
     const conn = await this.getConnection(connectionId);
     if (!conn || conn.status !== 'connected') throw new Error('connection is not connected');
     const adapter = this.requireAdapter(conn.provider);
-    let token = await this.readSecret(connectionId, 'token');
+    // §9 shared family credential: service rows point at the family vault row
+    const familyRef = await this.readSecret(connectionId, 'family_vault_id');
+    const vaultRowId = familyRef ?? connectionId;
+    let token = await this.readSecret(vaultRowId, 'token');
     if (!token) { await this.markError(connectionId, 'no stored credential'); throw new Error('no stored credential for this connection'); }
     if (conn.auth_method === 'oauth2' && needsRefresh(conn.token_expires_at)) {
-      const refresh = await this.readSecret(connectionId, 'refresh_token');
+      const refresh = await this.readSecret(vaultRowId, 'refresh_token');
       const method = adapter.manifest.authMethods.find(m => m.kind === 'oauth2');
       if (refresh && method?.oauth) {
         const refreshed = await oauthRefresh(adapter.manifest, method, refresh).catch(() => null);
         if (refreshed) {
           token = refreshed.access_token;
-          await this.storeSecret(connectionId, 'token', refreshed.access_token);
-          if (refreshed.refresh_token) await this.storeSecret(connectionId, 'refresh_token', refreshed.refresh_token);
+          await this.storeSecret(vaultRowId, 'token', refreshed.access_token);
+          if (refreshed.refresh_token) await this.storeSecret(vaultRowId, 'refresh_token', refreshed.refresh_token);
           await this.deps.db.run(
             'UPDATE integration_connections SET token_expires_at = ?, last_success_at = ?, updated_at = ? WHERE id = ?',
             [refreshed.expires_at, iso(), iso(), connectionId]);
+          // family expiry: every Google service row sharing this identity
+          // expires together (the vault row itself has no family_vault_id
+          // pointer — propagate via identity_key so ALL members update)
+          if (conn.identity_key) {
+            await this.deps.db.run(
+              "UPDATE integration_connections SET token_expires_at = ?, updated_at = ? WHERE identity_key = ? AND user_id = ?",
+              [refreshed.expires_at, iso(), conn.identity_key, conn.user_id]).catch(() => {});
+          }
         } else {
-          await this.markReauth(connectionId, 'token refresh failed');
+          await this.markReauth(connectionId, 'Google authorization expired or was revoked');
+          if (conn.identity_key) {
+            // revoked family refresh → every service row needs reauth
+            await this.deps.db.run(
+              "UPDATE integration_connections SET status = 'reauth_required', last_error = 'Google authorization expired or was revoked', updated_at = ? WHERE identity_key = ? AND user_id = ?",
+              [iso(), conn.identity_key, conn.user_id]).catch(() => {});
+          }
           throw new Error('authorization expired — reconnect required');
         }
       }

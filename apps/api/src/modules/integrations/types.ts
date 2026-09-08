@@ -35,13 +35,22 @@ export interface AuthMethod {
     tokenUrl: string;
     clientIdEnv: string;
     clientSecretEnv: string;
+    /** static scope string — used unless scopeFromCapabilities is set */
     scopeParam: string;
     /** PKCE (S256) — required by modern providers, safe for all that accept it */
     pkce?: boolean;
     /** extra query params on the authorize URL (e.g. access_type=offline) */
     authorizeParams?: Record<string, string>;
-    /** providers whose OAuth identity is shared across services (Google) */
-    sharedIdentity?: string;        // 'google'
+    /** providers whose OAuth identity is shared across services (Google):
+     *  a family of providers authenticates once; scopes merge incrementally. */
+    sharedIdentity?: string;        // 'google' | 'meta' | 'microsoft' | ...
+    /** override the callback path (default /api/integrations/<provider>/oauth/callback).
+     *  Shared-identity families point at ONE family callback so a single
+     *  redirect URI covers every service in the family. */
+    redirectPath?: string;
+    /** compute the requested scope string from the capabilities the user
+     *  selected (least privilege per §4) instead of the static scopeParam */
+    scopeFromCapabilities?: boolean;
   };
 }
 
@@ -148,6 +157,11 @@ export interface ProviderAdapter {
   execute(capabilityId: string, cred: AdapterCredentials, args: Record<string, unknown>): Promise<unknown>;
   /** Health check — used by the engine's health sweep. */
   healthCheck?(cred: AdapterCredentials): Promise<{ ok: boolean; detail?: string }>;
+  /** Post-connect API verification (least-surprise: a connection is CONNECTED
+   *  only when the granted scopes actually reach the provider API). Returns a
+   *  standard error code (API_NOT_ENABLED, INVALID_SCOPE, …) on failure —
+   *  never a raw provider secret. */
+  verifyConnection?(cred: AdapterCredentials): Promise<{ ok: true } | { ok: false; code: string; detail: string }>;
   /** Incremental sync (polling providers). Returns new raw items + next cursor. */
   sync?(cred: AdapterCredentials, cursor: string | null): Promise<{ items: Record<string, unknown>[]; nextCursor: string | null }>;
   /** Map a raw provider item (sync/webhook) to a normalized event. */

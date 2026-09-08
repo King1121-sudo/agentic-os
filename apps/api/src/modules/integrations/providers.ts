@@ -163,26 +163,38 @@ export class GitHubPlatformAdapter implements ProviderAdapter {
 
 // ─── Google (shared identity: Gmail + YouTube) ───────────────────────────────
 
-/** Shared Google OAuth config — Gmail and YouTube adapters reference the SAME
- *  identity: same client id/secret, same redirect URI, identityKey groups the
- *  connections so one Google login serves many services (Phase 8 requirement). */
+/** Shared Google OAuth config — Gmail, YouTube, and every future Google service
+ *  (Calendar, Drive, Contacts, Tasks, Sheets…) reference the SAME identity:
+ *  same client id/secret, ONE family callback URL, scopes computed from the
+ *  capabilities the user selected (least privilege, incremental when the user
+ *  adds more services later). One Google login serves the whole family. */
 const googleOauth = {
   authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
   tokenUrl: 'https://oauth2.googleapis.com/token',
   clientIdEnv: 'GOOGLE_CLIENT_ID',
   clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
-  scopeParam: '',                       // per-adapter below
+  scopeParam: '',                       // scopes come from capabilities (below)
   pkce: true,
-  authorizeParams: { access_type: 'offline', prompt: 'consent' },
+  authorizeParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
   sharedIdentity: 'google',
+  redirectPath: '/api/integrations/google/oauth/callback',
+  scopeFromCapabilities: true,
 };
 
-async function googleProbe(token: string, scopeCheck: string): Promise<{ account: string; scopes: string[]; identityKey: string; expiresAt: null }> {
-  const res = await providerFetch('https://www.googleapis.com/oauth2/v2/userinfo', { headers: bearer(token) });
-  const user = await ensureOk(res, 'google identity probe');
-  if (!user?.email) throw new Error('Google token could not be verified');
-  void scopeCheck;
-  return { account: String(user.email), scopes: [], identityKey: `google:${user.email}`, expiresAt: null };
+/** Resolve the Google account identity from a token: prefer the STABLE subject
+ *  id (`sub`) over the email (§8 — email can change; sub never does). */
+async function googleIdentity(token: string): Promise<{ sub: string; email: string; name?: string }> {
+  const res = await providerFetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: bearer(token) });
+  const user = await ensureOk(res, 'google identity');
+  if (!user?.sub || !user?.email) throw new Error('Google token could not be verified');
+  return { sub: String(user.sub), email: String(user.email), name: user.name };
+}
+
+/** Probe used at connect + by every Google-family adapter: resolves account via
+ *  the OIDC userinfo endpoint, identityKey = google:<sub> (stable subject). */
+async function googleProbe(token: string, _scopeCheck: string): Promise<{ account: string; scopes: string[]; identityKey: string; expiresAt: null }> {
+  const id = await googleIdentity(token);
+  return { account: id.email, scopes: [], identityKey: `google:${id.sub}`, expiresAt: null };
 }
 
 // ─── Gmail ───────────────────────────────────────────────────────────────────
@@ -205,6 +217,22 @@ export const gmailManifest: ProviderManifest = {
 export class GmailPlatformAdapter implements ProviderAdapter {
   manifest = gmailManifest;
   async probeToken(token: string) { return googleProbe(token, 'gmail'); }
+  /** §11: verify the granted scopes actually reach the Gmail API — translate
+   *  provider errors into standard codes, never raw secrets. */
+  async verifyConnection(cred: AdapterCredentials): Promise<{ ok: true } | { ok: false; code: string; detail: string }> {
+    try {
+      const res = await providerFetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: bearer(cred.accessToken) });
+      if (res.status === 403) {
+        const detail = String(res.json?.error?.message ?? 'Gmail API not enabled for this Google project').slice(0, 160);
+        return { ok: false, code: 'API_NOT_ENABLED', detail };
+      }
+      if (res.status === 401) return { ok: false, code: 'TOKEN_EXPIRED', detail: 'access token rejected' };
+      if (res.json?.emailAddress) return { ok: true };
+      return { ok: false, code: 'ACCESS_DENIED', detail: `unexpected Gmail profile response (HTTP ${res.status})` };
+    } catch (e: any) {
+      return { ok: false, code: 'ERROR', detail: String(e?.message ?? e).slice(0, 160) };
+    }
+  }
   async execute(capabilityId: string, cred: AdapterCredentials, args: Record<string, unknown>) {
     const h = bearer(cred.accessToken);
     if (capabilityId === 'gmail.read') {
@@ -271,6 +299,26 @@ export const youtubeManifest: ProviderManifest = {
 export class YouTubePlatformAdapter implements ProviderAdapter {
   manifest = youtubeManifest;
   async probeToken(token: string) { return googleProbe(token, 'youtube'); }
+  /** §11: verify against the Data API (channels?mine) — catches disabled APIs,
+   *  channels without a YouTube presence, and scope problems. */
+  async verifyConnection(cred: AdapterCredentials): Promise<{ ok: true } | { ok: false; code: string; detail: string }> {
+    try {
+      const res = await providerFetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers: bearer(cred.accessToken) });
+      if (res.status === 403) {
+        const msg = String(res.json?.error?.message ?? '');
+        if (/api service|not been used|is disabled/i.test(msg)) return { ok: false, code: 'API_NOT_ENABLED', detail: 'YouTube Data API not enabled for this Google project' };
+        if (/quota/i.test(msg)) return { ok: false, code: 'QUOTA_EXCEEDED', detail: 'YouTube API quota exceeded' };
+        return { ok: false, code: 'INVALID_SCOPE', detail: msg.slice(0, 160) || 'scope does not permit this request' };
+      }
+      if (res.status === 401) return { ok: false, code: 'TOKEN_EXPIRED', detail: 'access token rejected' };
+      // empty items = valid auth, but this Google account has no channel —
+      // read capabilities still work for public data via search; channel.read degrades
+      if (Array.isArray(res.json?.items)) return { ok: true };
+      return { ok: false, code: 'ACCESS_DENIED', detail: `unexpected YouTube response (HTTP ${res.status})` };
+    } catch (e: any) {
+      return { ok: false, code: 'ERROR', detail: String(e?.message ?? e).slice(0, 160) };
+    }
+  }
   async execute(capabilityId: string, cred: AdapterCredentials, args: Record<string, unknown>) {
     const h = bearer(cred.accessToken);
     if (capabilityId === 'youtube.channel.read') {

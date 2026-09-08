@@ -23,6 +23,7 @@ export default function IntegrationsPage() {
   const providers = usePoll(() => api('/api/integrations'), 8000) as any[] | null;
   const events = usePoll(() => api('/api/integration-events'), 6000) as any[] | null;
   const [tokenForms, setTokenForms] = useState<Record<string, { [k: string]: string }>>({});
+  const [selectedCaps, setSelectedCaps] = useState<Record<string, string[]>>({});
   const [msg, setMsg] = useState('');
   const [oauthError, setOauthError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -57,7 +58,11 @@ export default function IntegrationsPage() {
 
   async function startOAuth(providerId: string) {
     try {
-      const r = await api(`/api/integrations/${providerId}/oauth?redirect_to=${encodeURIComponent(window.location.origin + '/integrations')}`);
+      // least privilege: only the capabilities the user selected (defaults to
+      // the manifest's default set) become the OAuth scope request
+      const caps = (selectedCaps[providerId] ?? []).join(',');
+      const capQuery = caps ? `&capabilities=${encodeURIComponent(caps)}` : '';
+      const r = await api(`/api/integrations/${providerId}/oauth?redirect_to=${encodeURIComponent(window.location.origin + '/integrations')}${capQuery}`);
       window.location.href = r.url; // → provider consent screen
     } catch (e: any) { flash(`error: ${e.message}`); }
   }
@@ -150,18 +155,47 @@ export default function IntegrationsPage() {
                   </div>
                 )}
 
-                {/* connect controls — driven by the provider's auth methods */}
-                {conns.filter((c: any) => c.status === 'connected').length === 0 && (
+                {/* connect controls — shown when NO active connection exists
+                    (a reauth_required row still shows the reconnect path) */}
+                {conns.filter((c: any) => c.status === 'connected' || c.status === 'reauth_required').length === 0 && (
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
                     {p.authMethods.map((m: any) => {
                       if (m.kind === 'oauth2') {
                         const disabled = m.configStatus !== 'configured';
+                        if (disabled) {
+                          return (
+                            <div key={m.kind} className="xs faint" style={{ marginBottom: 4 }}>
+                                              {m.label} · NOT CONFIGURED — set the provider's client id/secret env vars,
+                              then restart the backend.
+                                              <span style={{ display: 'block', marginTop: 2 }}>Redirect URI for the provider console: <span className="mono">{window.location.origin}/api/integrations/{p.id === 'gmail' || p.id === 'youtube' ? 'google' : p.id}/oauth/callback</span></span>
+                            </div>
+                          );
+                        }
+                        const reauth = conns.some((c: any) => c.status === 'reauth_required');
                         return (
-                          <button key={m.kind} className="primary" disabled={disabled}
-                            title={disabled ? `OAuth app credentials missing — set the ${p.name.toUpperCase()} client id/secret env vars` : `Start ${m.label} consent flow`}
-                            onClick={() => startOAuth(p.id)}>
-                            Connect with {m.label}{disabled ? ' (app not configured)' : ''}
-                          </button>
+                          <div key={m.kind}>
+                            {/* least privilege: choose capabilities before consent */}
+                            <div className="row wrap" style={{ gap: 4, marginBottom: 6 }}>
+                              {p.capabilities.map((c: any) => {
+                                const sel = (selectedCaps[p.id] ?? p.defaultCapabilities ?? []).includes(c.id);
+                                return (
+                                  <button key={c.id}
+                                    className={sel ? 'primary' : ''}
+                                    style={{ fontSize: 11, padding: '2px 8px' }}
+                                    title={c.description ?? c.label}
+                                    onClick={() => setSelectedCaps(s => {
+                                      const cur = s[p.id] ?? p.defaultCapabilities ?? [];
+                                      return { ...s, [p.id]: cur.includes(c.id) ? cur.filter(x => x !== c.id) : [...cur, c.id] };
+                                    })}>
+                                    {sel ? '☑' : '☐'} {c.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <button className="primary" onClick={() => startOAuth(p.id)}>
+                              {reauth ? 'Reconnect Google' : `Connect with ${m.label}`}
+                            </button>
+                          </div>
                         );
                       }
                       // token / bot_token: render exactly the fields the provider declares
@@ -180,6 +214,14 @@ export default function IntegrationsPage() {
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* REAUTH_REQUIRED: Google authorization expired/revoked */}
+                {conns.some((c: any) => c.status === 'reauth_required') && (
+                  <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                    <span className="badge b-amber">Google authorization expired or was revoked</span>
+                    <button className="primary" onClick={() => startOAuth(p.id)}>Reconnect Google</button>
                   </div>
                 )}
 

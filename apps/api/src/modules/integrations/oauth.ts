@@ -11,8 +11,8 @@
  */
 import * as crypto from 'crypto';
 import type { DataPort } from '../../infra/types';
-import { iso, uuid } from '../../infra/types';
-import type { AuthMethod, ProviderManifest } from './types';
+import { iso } from '../../infra/types';
+import type { AuthMethod, ProviderManifest, CapabilityDef } from './types';
 
 export interface OAuthFlowConfig {
   authorizeUrl: string;
@@ -21,8 +21,17 @@ export interface OAuthFlowConfig {
   clientSecret: string;
   scopeParam: string;
   redirectBase: string;
+  redirectPath: string;
   pkce: boolean;
   authorizeParams?: Record<string, string>;
+}
+
+/** The callback path for a provider: family-shared when the manifest declares
+ *  one (Google: a single /api/integrations/google/oauth/callback covers Gmail,
+ *  YouTube, and every future Google service), provider-specific otherwise. */
+export function callbackPathFor(manifest: ProviderManifest): string {
+  const method = manifest.authMethods.find(m => m.kind === 'oauth2');
+  return method?.oauth?.redirectPath ?? `/api/integrations/${manifest.id}/oauth/callback`;
 }
 
 /** Resolve the flow config for a provider's oauth method; throws with a
@@ -34,20 +43,40 @@ export function resolveOAuthFlow(manifest: ProviderManifest, method: AuthMethod)
   if (!clientId || !clientSecret) {
     throw new Error(`${manifest.name} OAuth app not configured — set ${o.clientIdEnv} and ${o.clientSecretEnv}`);
   }
+  const redirectBase = (process.env.AGENTIC_PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '');
   return {
     authorizeUrl: o.authorizeUrl,
     tokenUrl: o.tokenUrl,
     clientId, clientSecret,
     scopeParam: o.scopeParam,
-    redirectBase: process.env.AGENTIC_PUBLIC_URL ?? 'http://localhost:3000',
+    redirectBase,
+    redirectPath: callbackPathFor(manifest),
     pkce: !!o.pkce,
     authorizeParams: o.authorizeParams,
   };
 }
 
+/** Least-privilege scope string for the capabilities the user selected: the
+ *  union of each capability's provider scopes (openid/email for identity). */
+export function scopesForCapabilities(manifest: ProviderManifest, capabilityIds: string[]): string {
+  const byId = new Map(manifest.capabilities.map(c => [c.id, c] as const));
+  const scopes = new Set<string>();
+  for (const id of capabilityIds) {
+    const cap = byId.get(id);
+    if (!cap) continue;
+    for (const s of cap.scopes) scopes.add(s);
+  }
+  // identity scopes (shared Google login needs openid+email to resolve the account)
+  scopes.add('openid');
+  scopes.add('email');
+  return [...scopes].join(' ');
+}
+
 export interface StartedFlow { url: string; state: string }
 
-/** Step 1: persist a one-time state row (+ PKCE verifier) and build the consent URL. */
+/** Step 1: persist a one-time state row (+ PKCE verifier) and build the consent URL.
+ *  Scopes come from the REQUESTED CAPABILITIES (least privilege) unless the
+ *  manifest opts into a static scope string. */
 export async function oauthStart(
   db: DataPort, userId: string, manifest: ProviderManifest, method: AuthMethod,
   requestedCapabilities: string[], redirectTo: string | null,
@@ -63,9 +92,12 @@ export async function oauthStart(
      verifier, JSON.stringify(requestedCapabilities)]);
   const url = new URL(flow.authorizeUrl);
   url.searchParams.set('client_id', flow.clientId);
-  url.searchParams.set('redirect_uri', `${flow.redirectBase.replace(/\/$/, '')}/api/integrations/${manifest.id}/oauth/callback`);
+  url.searchParams.set('redirect_uri', `${flow.redirectBase}${flow.redirectPath}`);
   url.searchParams.set('state', state);
-  url.searchParams.set('scope', flow.scopeParam);
+  const scopeStr = method.oauth?.scopeFromCapabilities
+    ? scopesForCapabilities(manifest, requestedCapabilities)
+    : flow.scopeParam;
+  url.searchParams.set('scope', scopeStr);
   if (flow.pkce && challenge) {
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
@@ -100,7 +132,7 @@ export async function oauthExchange(
     client_secret: flow.clientSecret,
     code,
     grant_type: 'authorization_code',
-    redirect_uri: `${flow.redirectBase.replace(/\/$/, '')}/api/integrations/${manifest.id}/oauth/callback`,
+    redirect_uri: `${flow.redirectBase}${flow.redirectPath}`,
   };
   if (st.code_challenge) body.code_verifier = st.code_challenge;
   const res = await fetch(flow.tokenUrl, {

@@ -840,16 +840,27 @@ export function buildApi(deps: ApiDeps) {
     const error = String(req.query?.error ?? '');
     if (error) return reply.redirect(`/integrations?oauth_error=${encodeURIComponent(error)}`);
     if (!state || !code) return reply.redirect('/integrations?oauth_error=missing_code');
-    const rows = await db.query<any>('SELECT user_id, redirect_to FROM oauth_states WHERE state = ?', [state]);
+    // FAMILY callback (e.g. /api/integrations/google/oauth/callback): resolve
+    // the actual provider from the state row — the id segment is the family.
+    const rows = await db.query<any>('SELECT user_id, redirect_to, integration_id FROM oauth_states WHERE state = ?', [state]);
     if (!rows[0]) return reply.redirect('/integrations?oauth_error=state_expired');
+    const provider = integrationsService.getAdapter(String(req.params.id))
+      ? String(req.params.id)
+      : rows[0].integration_id;      // family callback → state knows the provider
     try {
-      const conn = await integrationsService.completeOAuth(rows[0].user_id, String(req.params.id), state, code);
+      const conn = await integrationsService.completeOAuth(rows[0].user_id, provider, state, code);
       const dest = rows[0].redirect_to ?? '/integrations';
-      return reply.redirect(`${dest}${dest.includes('?') ? '&' : '?'}connected=${conn.provider}`);
+      const suffix = conn.status === 'error'
+        ? `oauth_error=${encodeURIComponent(conn.last_error ?? 'verification failed')}`
+        : `connected=${conn.provider}`;
+      return reply.redirect(`${dest}${dest.includes('?') ? '&' : '?'}${suffix}`);
     } catch (e: any) {
       return reply.redirect(`/integrations?oauth_error=${encodeURIComponent(String(e?.message ?? e)).slice(0, 180)}`);
     }
   });
+
+  // §15 diagnostics — Google OAuth configuration state (no secrets)
+  app.get('/api/integrations/google/diagnostics', async () => integrationsService.googleDiagnostics());
 
   // Provider webhook intake (Phase 10): signature verification, replay
   // protection, normalization, bus bridge. Session-exempt (providers have no

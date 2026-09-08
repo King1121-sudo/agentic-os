@@ -196,7 +196,7 @@ describe('platform — connection lifecycle + capability authorization', () => {
     const svc = platform();
     // execution order: probe (userinfo) → token refresh → gmail list
     const fm1 = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'z@example.com' }), { status: 200 }));   // probe
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sub: 'z-sub-1', email: 'z@example.com' }), { status: 200 }));   // probe
     const conn = await svc.connectWithToken(userId, 'gmail', 'google-access-tok', 'oauth2', ['gmail.read']);
     fm1.mockRestore();
     // force expiry + a refresh token
