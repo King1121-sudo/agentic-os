@@ -82,17 +82,23 @@ describe('google oauth — configuration', () => {
 // ─── authorize URL + scopes ──────────────────────────────────────────────────
 
 describe('google oauth — authorize URL + capability scopes', () => {
-  it('builds the consent URL with PKCE S256, family redirect, offline access, and granted-scopes increment', async () => {
+  it('builds the consent URL with response_type=code, PKCE S256, family redirect, offline access, and granted-scopes increment', async () => {
     const { url } = await oauthStart(db, USER, gmailManifest, gmailManifest.authMethods[0], ['gmail.read'], null);
     const u = new URL(url);
     expect(u.origin).toBe('https://accounts.google.com');
+    expect(u.pathname).toBe('/o/oauth2/v2/auth');
     expect(u.searchParams.get('client_id')).toBe('g-client-id');
+    expect(u.searchParams.get('response_type')).toBe('code');   // REQUIRED — its omission was Google's 400 malformed-request
     expect(u.searchParams.get('redirect_uri')).toBe('http://localhost:3000/api/integrations/google/oauth/callback');
     expect(u.searchParams.get('code_challenge_method')).toBe('S256');
     expect(u.searchParams.get('access_type')).toBe('offline');
+    expect(u.searchParams.get('prompt')).toBe('consent');
     expect(u.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(u.searchParams.get('state')).toBeTruthy();
     expect(u.searchParams.get('scope')).toContain('openid');
     expect(u.searchParams.get('scope')).toContain('email');
+    // URL-encoded correctly (URLSearchParams handles the space-separated scopes)
+    expect(url).toContain(encodeURIComponent('https://www.googleapis.com/auth/gmail.readonly'));
   });
   it('scopes are computed from the SELECTED capabilities — least privilege (§4)', () => {
     const s = scopesForCapabilities(gmailManifest, ['gmail.read', 'gmail.send']);

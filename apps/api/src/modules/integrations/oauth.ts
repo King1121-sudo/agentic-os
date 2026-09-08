@@ -93,6 +93,7 @@ export async function oauthStart(
   const url = new URL(flow.authorizeUrl);
   url.searchParams.set('client_id', flow.clientId);
   url.searchParams.set('redirect_uri', `${flow.redirectBase}${flow.redirectPath}`);
+  url.searchParams.set('response_type', 'code');   // REQUIRED by Google (GitHub tolerates its absence — this omission caused Google's 400 malformed-request)
   url.searchParams.set('state', state);
   const scopeStr = method.oauth?.scopeFromCapabilities
     ? scopesForCapabilities(manifest, requestedCapabilities)
@@ -103,6 +104,8 @@ export async function oauthStart(
     url.searchParams.set('code_challenge_method', 'S256');
   }
   for (const [k, v] of Object.entries(flow.authorizeParams ?? {})) url.searchParams.set(k, v);
+  // Safe OAuth diagnostics (no secrets — never the client secret, tokens, or code):
+  console.log(`[oauth] ${manifest.id}: client_id=${flow.clientId ? 'configured' : 'NOT configured'} redirect_uri=${flow.redirectBase}${flow.redirectPath} scopes=[${scopeStr.split(' ').join(', ')}] state=present pkce=${flow.pkce ? 'S256' : 'off'}`);
   return { url: url.toString(), state };
 }
 
