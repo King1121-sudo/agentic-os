@@ -13,7 +13,7 @@ const KIND_META: Record<string, { icon: string; color: string; hint: string }> =
   trigger:    { icon: '⚡', color: 'var(--amber)',      hint: 'Flow entry point (run input)' },
   agent:      { icon: 'Ⓢ', color: 'var(--accent)',      hint: 'Run an agent to completion' },
   skill:      { icon: 'Ⓥ', color: 'var(--green)',      hint: 'Execute a skill via an agent' },
-  tool:       { icon: '🔧', color: 'var(--blue, var(--accent))', hint: 'Call a tool directly' },
+  tool:       { icon: '🔧', color: 'var(--blue)', hint: 'Call a tool directly' },
   condition:  { icon: '◇', color: 'var(--purple)',      hint: 'Boolean expression → true/false edges' },
   branch:     { icon: '⑃', color: 'var(--purple)',      hint: 'Route by ctx value → labeled edges' },
   loop:       { icon: '↻', color: 'var(--amber)',       hint: 'Repeat body N times' },
@@ -26,7 +26,7 @@ function FlowNodeView({ data, selected }: { data: Record<string, unknown>; selec
   const meta = KIND_META[kind] ?? KIND_META.tool;
   return (
     <div style={{
-      background: 'var(--card)', border: `1.5px solid ${selected ? meta.color : 'var(--border-bright)'}`,
+      background: 'var(--bg-panel-solid)', border: `1.5px solid ${selected ? meta.color : 'var(--border-bright)'}`,
       borderRadius: 10, padding: '7px 12px', minWidth: 150, fontSize: 12,
       boxShadow: selected ? `0 0 0 2px ${meta.color}33` : 'none',
     }}>
@@ -175,7 +175,7 @@ export default function FlowsPage() {
     <Shell title="Flows">
       <div className="between" style={{ marginBottom: 12 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Flow Builder</h1>
+          <h1 className="page-h1">Flow Builder</h1>
           <div className="xs faint">Visual automation graphs — trigger → agents, skills, tools, branches, loops, waits, approvals</div>
         </div>
         <div className="row">
@@ -215,7 +215,7 @@ export default function FlowsPage() {
               <h3 style={{ marginTop: 12 }}>Runs <span className="count">{(runs ?? []).length}</span></h3>
               {(runs ?? []).slice(0, 8).map((r: any) => (
                 <div key={r.id} className="item" style={{ fontSize: 11 }}>
-                  <span className={`dot ${r.status === 'completed' ? 'd-green' : r.status === 'failed' ? 'd-red' : r.status === 'waiting' || r.status === 'paused' || r.status === 'interrupted' ? 'd-amber' : 'd-blue'}`} />
+                  <span className={`dot ${r.status === 'completed' ? 'd-green' : r.status === 'failed' ? 'd-red' : r.status === 'waiting' || r.status === 'paused' || r.status === 'interrupted' ? 'd-amber' : 'd-cyan'}`} />
                   <div className="grow">
                     <div className="xs">{r.status} · {r.completed_nodes?.length ?? 0} nodes · {fmtAgo(r.started_at)}</div>
                     <div className="xs faint" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

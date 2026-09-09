@@ -12,7 +12,7 @@ const STATUS_TONE: Record<string, string> = {
   nominal: 'b-green', action_required: 'b-amber', critical: 'b-red',
 };
 const AGENT_DOT: Record<string, string> = {
-  idle: 'd-gray', thinking: 'd-blue', planning: 'd-blue', executing: 'd-blue',
+  idle: 'd-gray', thinking: 'd-cyan', planning: 'd-cyan', executing: 'd-cyan',
   waiting: 'd-amber', paused: 'd-amber', approval_required: 'd-amber',
   completed: 'd-green', failed: 'd-red', cancelled: 'd-gray',
 };

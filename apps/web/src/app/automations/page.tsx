@@ -69,7 +69,7 @@ export default function AutomationsPage() {
     <Shell title="Automations">
       <div className="between" style={{ marginBottom: 12 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Automation Inspector</h1>
+          <h1 className="page-h1">Automation Inspector</h1>
           <div className="xs faint">Cron, event and webhook triggers → flows or agents. Every fire is policy-gated and logged.</div>
         </div>
         <div className="row">

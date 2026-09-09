@@ -47,7 +47,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
     <Shell title={p.name}>
       <div className="between" style={{ marginBottom: 14 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>{p.name}</h1>
+          <h1 className="page-h1">{p.name}</h1>
           <div className="xs faint">{p.description}</div>
         </div>
         <span className="badge b-blue">{done}/{tasks.length} done</span>
@@ -91,7 +91,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
             const lvl = levelOf(t.id);
             return (
             <div key={t.id} className="item">
-              <span className={`dot ${t.status === 'done' ? 'd-green' : t.status === 'in_progress' ? 'd-blue' : t.status === 'blocked' ? 'd-red' : 'd-gray'}`} />
+              <span className={`dot ${t.status === 'done' ? 'd-green' : t.status === 'in_progress' ? 'd-cyan' : t.status === 'blocked' ? 'd-red' : 'd-gray'}`} />
               <div className="grow">
                 <div className="small" style={{ textDecoration: t.status === 'done' ? 'line-through' : 'none', opacity: t.status === 'done' ? 0.55 : 1 }}>
                   {t.title} {lvl != null && lvl > 0 && <span className="badge b-gray xs">L{lvl}</span>}
@@ -115,7 +115,7 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
               const sp = (r?.active_sprints ?? []).find((x: any) => x.id === s.id);
               return (
                 <div key={s.id} className="item">
-                  <span className={`badge ${s.status === 'active' ? 'b-blue' : s.status === 'completed' ? 'b-green' : s.status === 'cancelled' ? 'b-gray' : 'b-gray'}`}>{s.status}</span>
+                  <span className={`badge ${s.status === 'active' ? 'b-cyan' : s.status === 'completed' ? 'b-green' : s.status === 'cancelled' ? 'b-gray' : 'b-gray'}`}>{s.status}</span>
                   <div className="grow">
                     <div className="small" style={{ fontWeight: 600 }}>{s.name}</div>
                     <div className="xs faint">{s.objective?.slice(0, 80)}</div>

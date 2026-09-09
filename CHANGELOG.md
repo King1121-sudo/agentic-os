@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.14.0 — JARVIS UI/UX Transformation (2026-09-09)
+
+### Redesigned
+- **One HUD design system across the whole console** (`apps/web/src/app/globals.css`, rewritten): the base kernel CSS and the Phase-12 JARVIS cockpit CSS — previously two coexisting visual worlds — are unified into a single token layer. Deep space field (`#060a10`) with a fixed architectural grid, translucent panels with cyan corner ticks, IBM Plex Sans + JetBrains Mono type system, semantic status colors (cyan = information, orange = attention/action reserved, green = live, red = danger, purple = memory), one panel/button/badge/dot/metric primitive set, elevated shadows, glow tokens, reduced-motion-safe semantic animation. Light theme carries the same HUD language inverted. All text/surface pairs verified ≥4.5:1.
+- **App shell** (`Shell.tsx`): live clock, `LIVE/OFFLINE` bus indicator with glow, notification flyout (click-to-open instead of always-rendered), approval banner, v0.13 crumb, ARIA labels on all icon-only controls. Mobile (<820px): the rail collapses to a bottom navigation bar with safe-area insets — deliberate mobile command-first experience, not shrunken desktop.
+- **Home = Command Center**: cockpit is the primary view; the Phase-10 widget grid remains as a "Widget grid" toggle with all layout-editing preserved (add/reorder/width/remove/save/reset). New left bank: **Attention Required** panel (approvals + urgent notifications + recent failures, inline ✓/✕ decide) and **Mission Queue** with real deadline urgency (overdue red / due-within-48h orange, computed from task deadlines). Center: JARVIS Core + command surface. Right bank: Agent Presence, Autonomous Layer (sentinels with run counts), Realtime Feed with tone-coded event pins. HUD strip anchors system status.
+- **JARVIS Core**: real-state mode selector extended with `waiting` (paused/blocked agents) — modes: idle/thinking/executing/waiting/approval_required/error, all derived from health, approvals, agent statuses, live events. Mode copy tightened ("Kernel online — awaiting intent").
+- **Command surface**: voice state machine rebuilt (IDLE/LISTENING/PROCESSING/ERROR live via Web Speech; SPEAKING/INTERRUPTED typed and reserved for real TTS — never rendered fake). Voice chip shows the state; interim transcript surfaces as "heard: …"; suggested natural-language commands when empty; text and voice route the same `POST /api/command`.
+
+### Fixed
+- `var(--card)` undefined-token bug in the flows builder node and links tooltip (rendered no background).
+- Flows tool-node color fallback chain masking `--blue`.
+- Memory page `window.prompt/alert` → inline composer card (⌘⏎ submit) and inline operation status; links page derive `alert` → inline status line.
+- `.notice` side-tab accent border (AI-UI tell flagged by detector) → hairline cyan border + tinted field.
+- Status dot semantics: executing/running states pulse cyan (system) instead of blue; sprints active badge → cyan.
+- One header scale (`.page-h1` 17px/700) across all 12 subsystem pages (was ad-hoc 18px inline styles).
+- `--fg-faint` contrast 3.68:1 → 4.53:1 (dark), 4.4:1 → 5.11:1 (light).
+- Topbar version crumb v0.12 → v0.13.
+
+### Documentation
+- `apps/web/PRODUCT.md` (product truth: real-state-only, one-OS, command-first principles), `apps/web/DESIGN.md` (built-world design system record), `apps/web/.impeccable/surface-brief.md` (audit + direction contract).
+
+### Verified
+- `npm test` 165/165 · `tsc` 0 errors (web) · production `next build` green (15 routes) · all 14 routes live-200 with the new shell · command E2E through the new surface ("what are my agents doing" → real agent roster) · SOM/AX layout inspection (no overflow/misalignment at 1456×864) · Impeccable detector clean (1 brief-pinned advisory retained: the architectural grid field).
+
 ## 0.13.0 — Universal Integration Platform (2026-09-08)
 
 ### Replaced

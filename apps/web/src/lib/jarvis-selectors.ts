@@ -14,6 +14,7 @@ export function selectJarvisMode(input: {
   const last = (input.events ?? [])[0];
   if (last?.type === 'agent.token' || last?.type === 'agent.thinking') return 'thinking';
   if (last?.type?.includes?.('failed')) return 'error';
+  if (agents.some(a => a.status === 'waiting' || a.status === 'paused')) return 'waiting';
   return 'idle';
 }
 

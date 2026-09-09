@@ -10,7 +10,7 @@ export default function SettingsPage() {
 
   return (
     <Shell title="Settings">
-      <h1 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>Settings & System</h1>
+      <h1 className="page-h1">Settings & System</h1>
 
       <div className="grid cols-2">
         <div className="card">

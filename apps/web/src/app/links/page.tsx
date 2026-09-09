@@ -195,10 +195,13 @@ export default function LinksPage() {
     v.scale = Math.max(0.3, Math.min(3, v.scale * factor));
   };
 
+  const [deriveMsg, setDeriveMsg] = useState('');
+
   const derive = async () => {
     const r = await post('/api/graph/derive', {});
     load();
-    alert(`Derived ${r.links_created} new co-occurrence link(s)${r.links_removed ? `, removed ${r.links_removed} stale` : ''} from ${r.pairs_scanned} entity pairs.`);
+    setDeriveMsg(`Derived ${r.links_created} new co-occurrence link(s)${r.links_removed ? `, removed ${r.links_removed} stale` : ''} from ${r.pairs_scanned} entity pairs.`);
+    setTimeout(() => setDeriveMsg(''), 6000);
   };
 
   const toggleKind = (k: string) => {
@@ -212,13 +215,14 @@ export default function LinksPage() {
     <Shell title="Links">
       <div className="between" style={{ marginBottom: 12 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Links Explorer</h1>
+          <h1 className="page-h1">Links Explorer</h1>
           <div className="xs faint">
             Knowledge graph — {snapshot?.nodes.length ?? 0} nodes · {explicitCount} explicit · {derivedCount} derived (co-occurrence)
           </div>
         </div>
         <div className="row">
           <button onClick={derive}>⟳ Derive links</button>
+          {deriveMsg && <span className="xs mono" style={{ color: 'var(--green)' }} role="status">{deriveMsg}</span>}
           <button onClick={() => setRunning(r => !r)}>{running ? '❚❚ Freeze' : '▶ Animate'}</button>
           <button onClick={() => { setFocusId(null); setSelected(null); setNeighborhood(null); }}>Clear focus</button>
         </div>
@@ -244,7 +248,7 @@ export default function LinksPage() {
             onWheel={onWheel}
           />
           {hover && (
-            <div style={{ position: 'absolute', pointerEvents: 'none', background: 'var(--card)', border: '1px solid var(--border-bright)', borderRadius: 6, padding: '4px 8px', fontSize: 11, left: 12, top: 12 }}>
+            <div style={{ position: 'absolute', pointerEvents: 'none', background: 'var(--bg-panel-solid)', border: '1px solid var(--border-bright)', borderRadius: 6, padding: '4px 8px', fontSize: 11, left: 12, top: 12 }}>
               <b>{hover.label}</b> <span className="faint">({hover.kind} · {hover.degree} links{hover.weight ? ` · w${hover.weight}` : ''})</span>
             </div>
           )}

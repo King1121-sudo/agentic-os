@@ -3,7 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, post } from '@/lib/api';
 
-type VoiceStatus = 'idle' | 'unsupported' | 'listening' | 'submitting' | 'error';
+/**
+ * Voice states per the voice-first architecture: IDLE, LISTENING, PROCESSING,
+ * SPEAKING, INTERRUPTED, ERROR. Text and voice share the same routing
+ * (POST /api/command) — never a separate logic path.
+ */
+type VoiceState =
+  | { status: 'idle' }
+  | { status: 'unsupported' }
+  | { status: 'listening'; interim: string }
+  | { status: 'processing'; text: string }
+  | { status: 'error'; message: string };
 
 const ROUTES = [
   { label: 'Open agents', href: '/agents' },
@@ -16,6 +26,13 @@ const ROUTES = [
   { label: 'Open links graph', href: '/links' },
 ];
 
+const SUGGESTIONS = [
+  "what's important today?",
+  'show my active agents',
+  'status of my projects',
+  'plan a sprint for the next milestone',
+];
+
 export function JarvisCommandSurface({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   const [text, setText] = useState('');
@@ -23,7 +40,7 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [results, setResults] = useState<any[]>([]);
-  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>('idle');
+  const [voice, setVoice] = useState<VoiceState>({ status: 'idle' });
   const recognitionRef = useRef<any>(null);
 
   const routeMatches = useMemo(() => {
@@ -45,6 +62,7 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     const q = commandText.trim();
     if (!q) return;
     setBusy(true);
+    setVoice({ status: 'processing', text: q });
     setMessage('Routing intent through kernel…');
     try {
       const res = await post<any>('/api/command', { text: q });
@@ -56,9 +74,11 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
       setText('');
     } catch (e: any) {
       setMessage(`Command error: ${e.message}`);
+      setVoice({ status: 'error', message: e.message });
     } finally {
       setBusy(false);
-      setVoiceStatus('idle');
+      // return to idle after a short processing beat (state stays visible meanwhile)
+      setTimeout(() => setVoice(v => v.status === 'processing' ? { status: 'idle' } : v), 900);
     }
   }, [router, text]);
 
@@ -66,38 +86,57 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     if (mode === 'search') runSearch(text);
   }, [mode, runSearch, text]);
 
-  const startVoice = () => {
+  // -- voice: same command path, Web Speech API ------------------------------
+  const startVoice = useCallback(() => {
     const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!Ctor) { setVoiceStatus('unsupported'); setMessage('Voice recognition is not supported in this browser.'); return; }
+    if (!Ctor) { setVoice({ status: 'unsupported' }); setMessage('Voice recognition is not supported in this browser.'); return; }
+    try { recognitionRef.current?.abort?.(); } catch { /* stale */ }
     const rec = new Ctor();
     rec.continuous = false;
     rec.interimResults = true;
     rec.lang = 'en-US';
     recognitionRef.current = rec;
-    setVoiceStatus('listening');
+    setVoice({ status: 'listening', interim: '' });
     setMessage('Listening… review the transcript before submitting.');
     rec.onresult = (event: any) => {
       let transcript = '';
       for (let i = event.resultIndex; i < event.results.length; i++) transcript += event.results[i][0].transcript;
       setText(transcript.trim());
+      setVoice({ status: 'listening', interim: transcript.trim() });
     };
-    rec.onerror = (event: any) => { setVoiceStatus('error'); setMessage(`Voice error: ${event.error ?? 'unknown'}`); };
-    rec.onend = () => setVoiceStatus(s => s === 'listening' ? 'idle' : s);
+    rec.onerror = (event: any) => {
+      setVoice({ status: 'error', message: event.error ?? 'unknown' });
+      setMessage(`Voice error: ${event.error ?? 'unknown'}`);
+    };
+    rec.onend = () => setVoice(s => s.status === 'listening' ? { status: 'idle' } : s);
     rec.start();
-  };
+  }, []);
 
-  const stopVoice = () => {
-    recognitionRef.current?.stop?.();
-    setVoiceStatus('idle');
-  };
+  const stopVoice = useCallback(() => {
+    try { recognitionRef.current?.stop?.(); } catch { /* not running */ }
+    setVoice({ status: 'idle' });
+  }, []);
+
+  // cleanup on unmount
+  useEffect(() => () => { try { recognitionRef.current?.abort?.(); } catch { /* */ } }, []);
+
+  const voiceChipClass = voice.status === 'listening' ? 'is-listening' : voice.status === 'processing' ? 'is-processing' : voice.status === 'error' ? 'is-error' : '';
+  const voiceLabel = voice.status === 'listening' ? 'LISTENING'
+    : voice.status === 'processing' ? 'PROCESSING'
+    : voice.status === 'error' ? 'ERROR'
+    : voice.status === 'unsupported' ? 'UNSUPPORTED'
+    : '';
 
   return (
     <section className={`jarvis-command ${compact ? 'compact' : ''}`} aria-label="JARVIS command surface">
       <div className="jarvis-command-tabs" role="tablist" aria-label="Command mode">
         <button className={mode === 'command' ? 'primary' : ''} onClick={() => setMode('command')} role="tab" aria-selected={mode === 'command'}>Command</button>
         <button className={mode === 'search' ? 'primary' : ''} onClick={() => setMode('search')} role="tab" aria-selected={mode === 'search'}>Search</button>
-        <button aria-label={voiceStatus === 'listening' ? 'Stop voice input' : 'Start voice input'} onClick={voiceStatus === 'listening' ? stopVoice : startVoice}>
-          {voiceStatus === 'listening' ? '■ Voice' : '◉ Voice'}
+        <span style={{ flex: 1 }} />
+        {voiceLabel && <span className={`voice-chip ${voiceChipClass}`} role="status">{voiceLabel}</span>}
+        <button aria-label={voice.status === 'listening' ? 'Stop voice input' : 'Start voice input'}
+          onClick={voice.status === 'listening' ? stopVoice : startVoice}>
+          {voice.status === 'listening' ? '■ Voice' : '◉ Voice'}
         </button>
       </div>
       <div className="jarvis-command-input-row">
@@ -110,11 +149,25 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
         />
         <button className="primary" disabled={busy || !text.trim()} onClick={() => submitCommand()}>{busy ? 'Routing…' : 'Run'}</button>
       </div>
-      {message && <div className="jarvis-command-message xs dim">{message}</div>}
+      {message && (
+        <div className="jarvis-command-message xs dim" role="status">{message}</div>
+      )}
+      {voice.status === 'listening' && voice.interim && (
+        <div className="xs mono" style={{ marginTop: 6, color: 'var(--cyan-bright)' }} role="status">
+          heard: “{voice.interim}”
+        </div>
+      )}
       {mode === 'command' && routeMatches.length > 0 && (
         <div className="jarvis-command-suggestions">
           {routeMatches.map(route => (
             <button key={route.href} onClick={() => router.push(route.href)}>↳ {route.label}</button>
+          ))}
+        </div>
+      )}
+      {mode === 'command' && !text && (
+        <div className="jarvis-command-suggestions" aria-label="Suggested commands">
+          {SUGGESTIONS.map(s => (
+            <button key={s} onClick={() => { setText(s); submitCommand(s); }}>❯ {s}</button>
           ))}
         </div>
       )}

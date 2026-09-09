@@ -4,11 +4,12 @@ import { JarvisMetric } from './JarvisMetric';
 import { JarvisStatusDot, toneForAgentStatus } from './JarvisStatusDot';
 
 const MODE_COPY: Record<JarvisMode, { label: string; detail: string }> = {
-  idle: { label: 'STANDBY', detail: 'Kernel is online and awaiting intent' },
+  idle: { label: 'STANDBY', detail: 'Kernel online — awaiting intent' },
   listening: { label: 'LISTENING', detail: 'Voice channel open' },
   thinking: { label: 'THINKING', detail: 'Planning and context synthesis active' },
   executing: { label: 'EXECUTING', detail: 'Agents are acting through the kernel' },
-  approval_required: { label: 'APPROVAL REQUIRED', detail: 'Human decision is blocking execution' },
+  waiting: { label: 'WAITING', detail: 'An agent is paused or waiting on a dependency' },
+  approval_required: { label: 'APPROVAL REQUIRED', detail: 'A human decision is blocking execution' },
   reviewing: { label: 'REVIEWING', detail: 'Focused workspace analysis' },
   error: { label: 'ATTENTION', detail: 'A system component needs review' },
 };
@@ -49,17 +50,17 @@ export function JarvisCore({
         })}
       </div>
 
-      <button className="jarvis-core-button" onClick={onActivate} aria-label="Open JARVIS command surface">
+      <button className="jarvis-core-button" onClick={onActivate} aria-label="Focus the JARVIS command surface">
         <span className="jarvis-core-ring ring-a" />
         <span className="jarvis-core-ring ring-b" />
         <span className="jarvis-core-ring ring-c" />
         <span className="jarvis-core-nucleus">
-          <span className="jarvis-core-mark">J</span>
+          <span className="jarvis-core-mark" aria-hidden="true">J</span>
         </span>
       </button>
 
       <div className="jarvis-core-readout">
-        <div className="jarvis-eyebrow">JARVIS CORE</div>
+        <div className="jarvis-eyebrow" aria-hidden="true">JARVIS CORE</div>
         <h1>{copy.label}</h1>
         <p>{copy.detail}</p>
         <div className="jarvis-core-status-row">

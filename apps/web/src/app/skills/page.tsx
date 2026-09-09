@@ -28,7 +28,7 @@ export default function SkillsPage() {
     <Shell title="Skills">
       <div className="between" style={{ marginBottom: 14 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Skills & Tools</h1>
+          <h1 className="page-h1">Skills & Tools</h1>
           <div className="xs faint">
             Composable capabilities — inheritance chains, versioning, hot-loadable JSON/YAML from <span className="mono">skills/</span>
           </div>

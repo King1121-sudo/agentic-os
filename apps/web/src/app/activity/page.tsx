@@ -22,7 +22,7 @@ function ActivityView() {
     <Shell title="Activity">
       <div className="between" style={{ marginBottom: 12 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>OS Activity Stream</h1>
+          <h1 className="page-h1">OS Activity Stream</h1>
           <div className="xs faint">Every kernel event, live. Click any execution event to open the trace.</div>
         </div>
       </div>
@@ -157,7 +157,7 @@ function TraceViewer({ execId, onClose }: { execId: string; onClose: () => void 
           <div className="xs faint" style={{ marginBottom: 4 }}>DELEGATED EXECUTIONS ({children.length})</div>
           {children.map((c: any) => (
             <div key={c.id} className="item" onClick={() => window.open(`/activity?exec=${c.id}`, '_self')}>
-              <span className={`dot ${c.status === 'completed' ? 'd-green' : c.status === 'failed' ? 'd-red' : c.status === 'running' ? 'd-blue' : 'd-gray'}`} />
+              <span className={`dot ${c.status === 'completed' ? 'd-green' : c.status === 'failed' ? 'd-red' : c.status === 'running' ? 'd-cyan' : 'd-gray'}`} />
               <div className="grow">
                 <div className="small">{c.input?.slice(0, 80)}</div>
                 <div className="xs faint mono">{c.id.slice(0, 8)} · {c.status}</div>

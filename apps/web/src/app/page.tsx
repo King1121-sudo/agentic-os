@@ -1,7 +1,7 @@
 'use client';
 import Shell from '@/components/Shell';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, post, usePoll, patch } from '@/lib/api';
 import type { AgentRecord, TaskRecord, ProjectRecord, NotificationRecord, OsEvent } from '@agentic/contracts';
 import { JarvisCockpitDashboard } from '@/components/jarvis/JarvisCockpitDashboard';
@@ -29,10 +29,12 @@ export default function Home() {
   const layoutData = usePoll(() => api('/api/dashboard/layout'), 0) as any | null; // load once (re-fetched after edits)
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Widget[] | null>(null);
-  const [prefsMsg, setPrefsMsg] = useState('');
-  const [cockpit, setCockpit] = useState(true);
-  useEffect(() => { const saved = localStorage.getItem('jarvis-cockpit'); if (saved === 'off') setCockpit(false); }, []);
-  const toggleCockpit = () => { setCockpit(c => { localStorage.setItem('jarvis-cockpit', c ? 'off' : 'on'); return !c; }); };
+  const [view, setView] = useState<'cockpit' | 'widgets'>('cockpit');
+  useEffect(() => { const saved = localStorage.getItem('jarvis-cockpit'); if (saved === 'off') setView('widgets'); }, []);
+  const toggleView = () => setView(v => {
+    localStorage.setItem('jarvis-cockpit', v === 'cockpit' ? 'off' : 'on');
+    return v === 'cockpit' ? 'widgets' : 'cockpit';
+  });
 
   const layout = draft ?? layoutData?.layout?.widgets ?? [];
   const registry: WidgetDef[] = layoutData?.registry ?? [];
@@ -76,7 +78,13 @@ export default function Home() {
     setDraft(draft.map(w => w.id === id ? { ...w, width: ((w.width % 3) + 1) as 1 | 2 | 3 } : w));
   };
 
-  if (!d) return <div className="empty">Booting OS dashboard…</div>;
+  const attentionCount = (approvals?.length ?? 0);
+
+  if (!d) return (
+    <Shell title="Home">
+      <div className="empty" style={{ marginTop: 40 }}>Booting command center…</div>
+    </Shell>
+  );
 
   const agents = Array.isArray(d.agents) ? d.agents : [];
   const tasks = Array.isArray(d.tasks) ? d.tasks : [];
@@ -95,38 +103,41 @@ export default function Home() {
   }
   if (row.length) rows.push(row);
 
-  const widgetProps = { d, health, approvals, autos, openTasks, agents, projects, notes, events, counts };
-
   return (
     <Shell title="Home">
-      <div className="between" style={{ marginBottom: 18 }}>
+      <div className="between" style={{ marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0.01em' }}>
             Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}.
           </h1>
           <div className="dim small">
             {openTasks.length} open tasks · {agents.filter(a => a.status !== 'idle').length} active agents · {notes.length} unread notifications
+            {attentionCount > 0 && <span style={{ color: 'var(--orange)' }}> · {attentionCount} awaiting your decision</span>}
           </div>
         </div>
         <div className="row">
-          <button onClick={toggleCockpit} title="Toggle JARVIS cockpit view">{cockpit ? '▼ Classic dashboard' : '▲ JARVIS cockpit'}</button>
-          {editing ? (
-            <>
-              <select onChange={e => { if (e.target.value) addWidget(e.target.value); e.target.value = ''; }} defaultValue="">
-                <option value="">+ Add widget…</option>
-                {registry.map(r => <option key={r.kind} value={r.kind}>{r.name} — {r.description}</option>)}
-              </select>
-              <button onClick={resetLayout}>Reset default</button>
-              <button onClick={cancelEdit}>Cancel</button>
-              <button className="primary" onClick={saveEdit}>Save layout</button>
-            </>
-          ) : (
-            <button onClick={startEdit}>⚙ Edit dashboard</button>
+          {view === 'widgets' && (
+            editing ? (
+              <>
+                <select onChange={e => { if (e.target.value) addWidget(e.target.value); e.target.value = ''; }} defaultValue="">
+                  <option value="">+ Add widget…</option>
+                  {registry.map(r => <option key={r.kind} value={r.kind}>{r.name} — {r.description}</option>)}
+                </select>
+                <button onClick={resetLayout}>Reset default</button>
+                <button onClick={cancelEdit}>Cancel</button>
+                <button className="primary" onClick={saveEdit}>Save layout</button>
+              </>
+            ) : (
+              <button onClick={startEdit}>⚙ Edit widgets</button>
+            )
           )}
+          <button onClick={toggleView} title="Switch command center / widget grid view">
+            {view === 'cockpit' ? '▦ Widget grid' : '◉ Command center'}
+          </button>
         </div>
       </div>
 
-      {cockpit && (
+      {view === 'cockpit' && (
         <JarvisCockpitDashboard
           d={d}
           health={health}
@@ -138,10 +149,11 @@ export default function Home() {
           notes={notes}
           events={events}
           counts={counts}
+          onEditDashboard={() => { setView('widgets'); startEdit(); }}
         />
       )}
 
-      {!cockpit && (
+      {view === 'widgets' && (
         <>
           {editing && (
             <div className="xs faint" style={{ marginBottom: 10 }}>
@@ -161,12 +173,13 @@ export default function Home() {
                       <button className="xs ghost" onClick={() => removeWidget(w.id)}>✕</button>
                     </div>
                   )}
-                  <WidgetCard kind={w.kind} {...widgetProps} />
+                  <WidgetCard kind={w.kind} d={d} health={health} approvals={approvals} autos={autos}
+                    openTasks={openTasks} agents={agents} projects={projects} notes={notes} events={events} counts={counts} />
                 </div>
               ))}
             </div>
           ))}
-          {layout.length === 0 && <div className="empty">Dashboard is empty — add widgets with ⚙ Edit dashboard.</div>}
+          {layout.length === 0 && !editing && <div className="empty">Dashboard is empty — add widgets with ⚙ Edit widgets.</div>}
         </>
       )}
     </Shell>
@@ -175,8 +188,8 @@ export default function Home() {
 
 // --- the widget SDK: every widget is a pure function of dashboard data ------
 
-function WidgetCard({ kind, ...props }: { kind: string } & ReturnType<typeof buildWidgetProps>) {
-  switch (kind) {
+function WidgetCard(props: { kind: string } & WProps) {
+  switch (props.kind) {
     case 'agent-presence': return <AgentPresenceWidget {...props} />;
     case 'system-health': return <SystemHealthWidget {...props} />;
     case 'open-tasks': return <OpenTasksWidget {...props} />;
@@ -187,12 +200,14 @@ function WidgetCard({ kind, ...props }: { kind: string } & ReturnType<typeof bui
     case 'counts': return <CountsWidget {...props} />;
     case 'approvals': return <ApprovalsWidget {...props} />;
     case 'automations': return <AutomationsWidget {...props} />;
-    default: return <div className="card"><div className="empty">Unknown widget: {kind}</div></div>;
+    default: return <div className="card"><div className="empty">Unknown widget: {props.kind}</div></div>;
   }
 }
 
-type WProps = ReturnType<typeof buildWidgetProps>;
-function buildWidgetProps() { return {} as any; }
+type WProps = {
+  d: DashboardData; health: HealthData | null; approvals: any[] | null; autos: any[] | null;
+  openTasks: any[]; agents: any[]; projects: any[]; notes: any[]; events: any[]; counts: Record<string, number>;
+};
 
 function AgentPresenceWidget({ agents }: WProps) {
   return (
@@ -201,7 +216,7 @@ function AgentPresenceWidget({ agents }: WProps) {
       {agents.length === 0 && <div className="empty">No agents. Seed the OS from the settings panel.</div>}
       {agents.map((a: any) => (
         <Link key={a.id} href={`/agents/${a.id}`} className="item">
-          <span className={`dot ${a.status === 'idle' ? 'd-gray' : a.status === 'executing' ? 'd-blue' : a.status === 'approval_required' ? 'd-amber' : 'd-green'}`} />
+          <span className={`dot ${a.status === 'idle' ? 'd-gray' : a.status === 'executing' ? 'd-cyan' : a.status === 'approval_required' ? 'd-amber' : a.status === 'failed' ? 'd-red' : 'd-green'}`} />
           <div className="grow">
             <div className="row between"><span style={{ fontWeight: 600 }}>{a.name}</span><span className="xs mono dim">{a.status}</span></div>
             <div className="xs faint">{a.description?.slice(0, 70)}</div>
@@ -219,7 +234,7 @@ function SystemHealthWidget({ health, counts }: WProps) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div className="row between small"><span>Database</span><span className={`badge ${health?.db === 'up' ? 'b-green' : 'b-red'}`}>{health?.db ?? '…'}</span></div>
         <div className="row between small"><span>Event broker</span><span className="badge b-green">up</span></div>
-        <div className="row between small"><span>Kernel</span><span className="badge b-blue">v{health?.version ?? '…'}</span></div>
+        <div className="row between small"><span>Kernel</span><span className="badge b-cyan">v{health?.version ?? '…'}</span></div>
       </div>
       {Object.keys(counts).length > 0 && (
         <>
@@ -238,10 +253,10 @@ function SystemHealthWidget({ health, counts }: WProps) {
 function OpenTasksWidget({ openTasks }: WProps) {
   return (
     <div className="card">
-      <h3>Today’s Tasks <span className="count">{openTasks.length}</span></h3>
+      <h3>Today's Tasks <span className="count">{openTasks.length}</span></h3>
       {openTasks.slice(0, 6).map((t: any) => (
         <Link key={t.id} href={`/projects/${t.project_id}`} className="item">
-          <span className={`dot ${t.status === 'in_progress' ? 'd-blue' : 'd-gray'}`} />
+          <span className={`dot ${t.status === 'in_progress' ? 'd-cyan' : t.status === 'blocked' ? 'd-red' : 'd-gray'}`} />
           <div className="grow">
             <div className="small">{t.title}</div>
             <div className="xs faint">{t.priority} · {t.status}</div>
@@ -278,7 +293,7 @@ function UnreadNotesWidget({ notes }: WProps) {
       <PushOptIn />
       {notes.slice(0, 6).map((n: any) => (
         <div key={n.id} className="item">
-          <span className={`dot ${n.priority === 'high' || n.priority === 'urgent' ? 'd-red' : 'd-gray'}`} />
+          <span className={`dot ${n.priority === 'high' || n.priority === 'urgent' ? 'd-red' : n.priority === 'medium' ? 'd-amber' : 'd-gray'}`} />
           <div className="grow">
             <div className="small" style={{ fontWeight: 600 }}>{n.title}</div>
             <div className="xs dim">{n.message?.slice(0, 120)}</div>
@@ -336,15 +351,22 @@ function CountsWidget({ counts }: WProps) {
 }
 
 function ApprovalsWidget({ approvals }: WProps) {
+  const decide = async (id: string, decision: 'approve' | 'deny') => {
+    await post(`/api/approvals/${id}/decision`, { decision }).catch(() => {});
+  };
   return (
     <div className="card">
       <h3>Pending Approvals <span className="count">{approvals?.length ?? 0}</span></h3>
       {(approvals ?? []).map((a: any) => (
-        <div key={a.id} className="item">
+        <div key={a.id} className="item" style={{ cursor: 'default' }}>
           <span className="dot d-amber" />
           <div className="grow">
             <div className="small" style={{ fontWeight: 600 }}>{a.tool}</div>
             <div className="xs faint">{a.reason?.slice(0, 100)}</div>
+            <div className="row" style={{ marginTop: 6 }}>
+              <button onClick={() => decide(a.id, 'approve')}>Approve</button>
+              <button className="danger" onClick={() => decide(a.id, 'deny')}>Deny</button>
+            </div>
           </div>
         </div>
       ))}
@@ -358,8 +380,8 @@ function AutomationsWidget({ autos }: WProps) {
     <div className="card">
       <h3>Automations <span className="count">{autos?.length ?? 0}</span></h3>
       {(autos ?? []).slice(0, 6).map((a: any) => (
-        <div key={a.id} className="item">
-          <span className="dot d-blue" />
+        <div key={a.id} className="item" style={{ cursor: 'default' }}>
+          <span className={`dot ${a.enabled ? 'd-cyan' : 'd-gray'}`} />
           <div className="grow">
             <div className="small">{a.name} {!a.enabled && <span className="badge b-gray">paused</span>}</div>
             <div className="xs faint">{a.trigger} → {a.action} · {a.run_count} runs</div>
@@ -445,13 +467,13 @@ function urlB64ToUint8(base64: string): Uint8Array<ArrayBuffer> {
   return arr;
 }
 
-// --- shared event row (unchanged from the original dashboard) ---------------
+// --- shared event row -------------------------------------------------------
 function EventRow({ ev }: { ev: OsEvent }) {
   const colorFor = (t: string) => {
-    if (t.startsWith('agent')) return t.includes('fail') ? 'var(--red)' : t.includes('completed') ? 'var(--green)' : 'var(--accent)';
-    if (t.startsWith('tool')) return t.includes('denied') || t.includes('fail') ? 'var(--red)' : 'var(--accent)';
+    if (t.startsWith('agent')) return t.includes('fail') ? 'var(--red)' : t.includes('completed') ? 'var(--green)' : 'var(--cyan)';
+    if (t.startsWith('tool')) return t.includes('denied') || t.includes('fail') ? 'var(--red)' : 'var(--cyan)';
     if (t.startsWith('memory')) return 'var(--purple)';
-    if (t.startsWith('approval')) return 'var(--amber)';
+    if (t.startsWith('approval')) return 'var(--orange)';
     if (t.startsWith('task') || t.startsWith('project') || t.startsWith('sprint')) return 'var(--green)';
     return 'var(--fg-dim)';
   };

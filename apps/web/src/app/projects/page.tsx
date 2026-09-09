@@ -19,7 +19,7 @@ export default function ProjectsPage() {
     <Shell title="Projects">
       <div className="between" style={{ marginBottom: 14 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Project Workspaces</h1>
+          <h1 className="page-h1">Project Workspaces</h1>
           <div className="xs faint">Each project is a mini OS: tasks, sprints, agents, memory, links</div>
         </div>
       </div>

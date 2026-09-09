@@ -15,7 +15,7 @@ export default function AgentsPage() {
     <Shell title="Agents">
       <div className="between" style={{ marginBottom: 14 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Agent Registry</h1>
+          <h1 className="page-h1">Agent Registry</h1>
           <div className="xs faint">Registered agents with model policy, tools, memory policy, autonomy</div>
         </div>
         <div className="row">
@@ -53,7 +53,7 @@ export default function AgentsPage() {
           <div key={a.id} className="card">
             <div className="between" style={{ marginBottom: 8 }}>
               <div className="row">
-                <span className={`dot ${a.status === 'idle' ? 'd-gray' : a.status === 'executing' ? 'd-blue' : a.status === 'approval_required' ? 'd-amber' : 'd-green'}`} />
+                <span className={`dot ${a.status === 'idle' ? 'd-gray' : a.status === 'executing' ? 'd-cyan' : a.status === 'approval_required' ? 'd-amber' : 'd-green'}`} />
                 <span style={{ fontWeight: 700 }}>{a.name}</span>
               </div>
               <span className="badge b-blue">{AUTONOMY[a.autonomy_level] ?? `L${a.autonomy_level}`}</span>

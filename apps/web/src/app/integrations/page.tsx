@@ -85,7 +85,7 @@ export default function IntegrationsPage() {
     <Shell title="Integrations">
       <div className="between" style={{ marginBottom: 12 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Integrations</h1>
+          <h1 className="page-h1">Integrations</h1>
           <div className="xs faint">
             Universal integration platform — providers declare their own authentication + capabilities.
             Credentials encrypted at rest (AES-256-GCM); every agent action is capability-gated + audited.

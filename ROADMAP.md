@@ -1,6 +1,15 @@
 # Agentic OS — Roadmap
 
-> **Status: Phases 1–12 complete + finalization pass.** All milestones below are shipped and verified (149 tests, typecheck clean, production builds green, migrations idempotent on fresh DBs). See `CHANGELOG.md` for per-phase history.
+> **Status: Phases 1–13 complete + JARVIS UI transformation.** All milestones below are shipped and verified (165 tests, typecheck clean, production builds green, migrations idempotent on fresh DBs). See `CHANGELOG.md` for per-phase history.
+
+## Phase UI — JARVIS Console Transformation ✅ (v0.14.0, 2026-09-09)
+
+- [x] **Stage 1 — Audit**: complete frontend map (14 routes, shell, jarvis component set, widget SDK, SSE/polling architecture, ~90 API endpoints) + backend-to-UI mapping; identified the two coexisting visual worlds (base kernel CSS + Phase-12 cockpit CSS), broken tokens (`--card`), browser-chrome dialogs (`prompt/alert`), inconsistent header scale, sub-AA muted-text contrast, and emoji-driven status semantics.
+- [x] **Stage 2 — Design architecture**: direction contract recorded (`.impeccable/surface-brief.md`): one HUD world, cyan information / orange attention budget, concentric geometry confined to the Core, real-state-only animation. PRODUCT.md + DESIGN.md document product truth and the built system.
+- [x] **Stage 3 — Design system**: `globals.css` rewritten as a single token layer — field/surfaces/lines/type/radius/spacing/shadow/glow/z tokens, panel + button + badge + dot + metric + select primitives, light theme sharing the HUD language, reduced-motion guards, mobile bottom-rail shell.
+- [x] **Stage 4 — Core experience**: Shell (clock, live bus, notification flyout, approval banner, mobile rail), Home command center (attention + deadlines + Core + command + agents + sentinels + feed + HUD strip; widget grid preserved as toggle), JARVIS Core real-state modes (+waiting), voice-ready command surface (state machine, transcript, same command route as text/⌘K).
+- [x] **Stage 5 — Secondary systems**: all 12 subsystem pages swept — unified headers, semantic status colors, fixed `--card`/`--blue` token bugs, inline memory composer, derive status line, select arrow restyle.
+- [x] **Stage 6 — QA**: 165/165 tests, tsc clean, production build green (15 routes), all routes live-200, command E2E through the new surface, SOM/AX layout verification, WCAG contrast fixes (all pairs ≥4.5:1), Impeccable detector findings resolved (side-tab, font; grid advisory retained as brief-pinned).
 
 ## Milestone 1 — Kernel v0.1 ✅ (this release)
 

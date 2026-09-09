@@ -23,10 +23,14 @@ export default function MemoryPage() {
     setResults(r);
   }
 
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerText, setComposerText] = useState('');
+  const [opMsg, setOpMsg] = useState('');
+
   async function add() {
-    const content = prompt('New memory content:');
-    if (!content) return;
-    await post('/api/memory', { type: type === 'all' ? 'semantic' : type, content, importance: 6 });
+    if (!composerText.trim()) return;
+    await post('/api/memory', { type: type === 'all' ? 'semantic' : type, content: composerText, importance: 6 });
+    setComposerText(''); setComposerOpen(false);
   }
 
   const shown = entityFocus ? (entityMems?.memories ?? []) : (results ?? list);
@@ -35,21 +39,39 @@ export default function MemoryPage() {
     <Shell title="Memory">
       <div className="between" style={{ marginBottom: 14 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700 }}>Memory Engine</h1>
+          <h1 className="page-h1">Memory Engine</h1>
           <div className="xs faint">
             Entity graph · working-memory windows · semantic retrieval — scored, decayed, consolidated
             {vector && <span style={{ color: 'var(--accent)' }}> · vector driver: {vector.kind} ({vector.dim}d, {vector.provider})</span>}
           </div>
         </div>
         <div className="row">
-          <button onClick={async () => {
-            const r = await post('/api/memory/entities/backfill', {});
-            alert(`Entity backfill: ${r.processed} memories scanned → ${r.entities} entities (${r.memories} distinct)`);
-          }}>Extract entities</button>
-          <button onClick={async () => { const r = await post('/api/memory/maintain', {}); alert(`Maintenance: ${r.decayed} decayed, ${r.merged} merged`); }}>Run maintenance</button>
-          <button className="primary" onClick={add}>+ Memory</button>
+          <button onClick={async () => { const r = await post('/api/memory/entities/backfill', {}); setOpMsg(`Backfill: ${r.processed} memories scanned → ${r.entities} entities (${r.memories} distinct)`); setTimeout(() => setOpMsg(''), 6000); }}>Extract entities</button>
+          <button onClick={async () => { const r = await post('/api/memory/maintain', {}); setOpMsg(`Maintenance: ${r.decayed} decayed, ${r.merged} merged`); setTimeout(() => setOpMsg(''), 6000); }}>Run maintenance</button>
+          <button className="primary" onClick={() => setComposerOpen(true)}>+ Memory</button>
         </div>
       </div>
+
+      {opMsg && <div className="notice" style={{ marginBottom: 12 }}>{opMsg}</div>}
+
+      {composerOpen && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <h3>New Memory <span className="count">{type === 'all' ? 'semantic' : type}</span></h3>
+          <textarea
+            autoFocus
+            placeholder="What should the OS remember? Entities are extracted automatically…"
+            value={composerText}
+            onChange={e => setComposerText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) add(); }}
+            aria-label="New memory content"
+          />
+          <div className="row" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
+            <button onClick={() => setComposerOpen(false)}>Cancel</button>
+            <button className="primary" disabled={!composerText.trim()} onClick={add}>Write memory</button>
+          </div>
+          <div className="xs faint" style={{ marginTop: 6 }}>⌘⏎ writes · importance 6 · type {type === 'all' ? 'semantic' : type}</div>
+        </div>
+      )}
 
       <div className="row" style={{ marginBottom: 12 }}>
         <input placeholder="Search memory — keyword + vector + recency + importance…" value={q}

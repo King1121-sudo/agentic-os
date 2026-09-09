@@ -31,7 +31,7 @@ export default function AgentDetail({ params }: { params: Promise<{ id: string }
         <div>
           <div className="row">
             <span className={`dot ${a.status === 'idle' ? 'd-gray' : 'd-blue'}`} />
-            <h1 style={{ fontSize: 18, fontWeight: 700 }}>{a.name}</h1>
+            <h1 className="page-h1">{a.name}</h1>
             <span className="badge b-blue">{AUTONOMY[a.autonomy_level] ?? `L${a.autonomy_level}`}</span>
           </div>
           <div className="xs faint">{a.description}</div>
@@ -57,7 +57,7 @@ export default function AgentDetail({ params }: { params: Promise<{ id: string }
           <h3 style={{ marginTop: 14 }}>Execution History <span className="count">{mine.length}</span></h3>
           {mine.map((e: any) => (
             <Link key={e.id} href={`/activity?exec=${e.id}`} className="item">
-              <span className={`dot ${e.status === 'completed' ? 'd-green' : e.status === 'failed' ? 'd-red' : 'd-blue'}`} />
+              <span className={`dot ${e.status === 'completed' ? 'd-green' : e.status === 'failed' ? 'd-red' : 'd-cyan'}`} />
               <div className="grow">
                 <div className="small">{e.input.slice(0, 90)}</div>
                 <div className="xs faint">{e.status} · {fmtAgo(e.started_at)} · {e.tokens_in + e.tokens_out} tok</div>

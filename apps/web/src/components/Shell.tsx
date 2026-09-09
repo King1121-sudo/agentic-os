@@ -1,5 +1,9 @@
 'use client';
-/** The OS shell: persistent rail, live topbar, command palette (⌘K), activity ticker. */
+/**
+ * The OS shell: persistent rail, live topbar, command palette (⌘K),
+ * activity ticker, approval banner, notification center.
+ * JARVIS visual language — one HUD world.
+ */
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo } from 'react';
@@ -30,7 +34,9 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
   const [notifs, setNotifs] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [clock, setClock] = useState('');
 
   // -- live event stream --
   const onEvent = useCallback((ev: OsEvent) => {
@@ -47,17 +53,26 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
         api('/api/notifications?status=unread'),
         api('/api/approvals?status=pending'),
       ]);
-      setNotifs(n); setApprovals(a);
+      setNotifs(Array.isArray(n) ? n : []);
+      setApprovals(Array.isArray(a) ? a : []);
     } catch { /* unauthenticated */ }
   }, []);
 
   useEffect(() => { refreshNotifs(); }, [refreshNotifs]);
 
+  // -- live clock (the OS knows the time) --
+  useEffect(() => {
+    const tick = () => setClock(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+
   // -- keyboard shortcuts --
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
-      else if (e.key === 'Escape') setPaletteOpen(false);
+      else if (e.key === 'Escape') { setPaletteOpen(false); setNotifOpen(false); }
       else if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         e.preventDefault(); setPaletteOpen(true);
       }
@@ -81,24 +96,27 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
   return (
     <div className="shell">
-      <nav className="rail">
-        <div className="logo">Æ</div>
+      <nav className="rail" aria-label="OS navigation">
+        <div className="logo" aria-hidden="true">Æ</div>
         {NAV.map(n => (
-          <Link key={n.href} href={n.href} title={`${n.label} (${n.key})`} className={pathname === n.href ? 'on' : ''}>
+          <Link key={n.href} href={n.href} title={`${n.label} (${n.key})`} aria-label={n.label}
+            className={pathname === n.href ? 'on' : ''}>
             {n.icon}
             {n.href === '/' && approvals.length > 0 && <span className="dot" title={`${approvals.length} pending approvals`} />}
           </Link>
         ))}
         <div className="spacer" />
-        <button className="ghost" onClick={toggleTheme} title="toggle theme">{theme === 'dark' ? '☾' : '☀'}</button>
-        <button className="ghost" title="logout" onClick={async () => { await post('/api/auth/logout', {}); location.href = '/login'; }}>⏻</button>
+        <button className="ghost" onClick={toggleTheme} title="toggle theme" aria-label="Toggle theme">{theme === 'dark' ? '☾' : '☀'}</button>
+        <button className="ghost" title="logout" aria-label="Log out"
+          onClick={async () => { await post('/api/auth/logout', {}); location.href = '/login'; }}>⏻</button>
       </nav>
 
       <div className="main">
         <header className="topbar">
           <span className="title">{activeLabel}</span>
-          <span className="crumb">Agentic OS v0.12</span>
+          <span className="crumb">AGENTIC OS v0.13</span>
           <div style={{ flex: 1 }} />
+          <span className="mono faint xs" aria-hidden="true" style={{ letterSpacing: '0.08em' }}>{clock}</span>
           <div className={`live ${connected ? '' : 'off'}`}>
             <span className="pulse" /> {connected ? 'LIVE' : 'OFFLINE'}
           </div>
@@ -106,9 +124,13 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
             Command <span className="kbd">⌘K</span>
           </button>
           <div className="row" style={{ position: 'relative' }}>
-            <button onClick={refreshNotifs} title="notifications">🔔{unreadCount ? ` ${unreadCount}` : ''}</button>
-            {notifs.length + approvals.length > 0 && (
-              <div className="card" style={{ position: 'absolute', top: 38, right: 0, width: 340, maxHeight: 360, overflowY: 'auto', zIndex: 50 }}>
+            <button onClick={() => { setNotifOpen(o => !o); if (!notifOpen) refreshNotifs(); }}
+              title="notifications" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}>
+              🔔{unreadCount ? ` ${unreadCount}` : ''}
+            </button>
+            {notifOpen && notifs.length + approvals.length > 0 && (
+              <div className="card" role="dialog" aria-label="Notifications"
+                style={{ position: 'absolute', top: 40, right: 0, width: 340, maxHeight: 380, overflowY: 'auto', zIndex: 50, boxShadow: 'var(--shadow-3)' }}>
                 {approvals.map(a => (
                   <div key={a.id} className="item" onClick={() => router.push('/activity')}>
                     <div className="grow">
@@ -138,32 +160,30 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
         </header>
 
         {approvals.length > 0 && (
-          <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(251,191,36,0.07)' }}>
-            <div className="row wrap" style={{ gap: 14 }}>
-              <span className="badge b-amber">⏸ {approvals.length} approval{approvals.length > 1 ? 's' : ''} pending</span>
-              {approvals.map(a => (
-                <span key={a.id} className="row small" style={{ gap: 6 }}>
-                  <span className="mono dim">{a.tool}</span>
-                  <button onClick={() => decide(a.id, 'approve', refreshNotifs)}>Approve</button>
-                  <button className="danger" onClick={() => decide(a.id, 'deny', refreshNotifs)}>Deny</button>
-                </span>
-              ))}
-            </div>
+          <div className="approval-banner" role="region" aria-label={`${approvals.length} approvals pending`}>
+            <span className="badge b-amber">⏸ {approvals.length} approval{approvals.length > 1 ? 's' : ''} pending</span>
+            {approvals.map(a => (
+              <span key={a.id} className="row small" style={{ gap: 6 }}>
+                <span className="mono dim">{a.tool}</span>
+                <button onClick={() => decide(a.id, 'approve', refreshNotifs)}>Approve</button>
+                <button className="danger" onClick={() => decide(a.id, 'deny', refreshNotifs)}>Deny</button>
+              </span>
+            ))}
           </div>
         )}
 
-        <main className="content">{children}</main>
+        <main className="content" id="os-content">{children}</main>
 
         <footer style={{ borderTop: '1px solid var(--border)', padding: '6px 16px', display: 'flex', gap: 16, background: 'var(--bg-panel)' }}>
-          <span className="xs faint">events {events.length ? `· last ${fmtTime(events[0].created_at)}` : ''}</span>
-          <div style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          <span className="xs faint mono">events {events.length ? `· last ${fmtTime(events[0].created_at)}` : ''}</span>
+          <div style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }} aria-hidden="true">
             {events[0] && (
               <span className="xs mono" style={{ color: 'var(--fg-faint)' }}>
-                latest: <span style={{ color: 'var(--accent)' }}>{events[0].type}</span> {JSON.stringify(events[0].data).slice(0, 120)}
+                latest: <span style={{ color: 'var(--cyan)' }}>{events[0].type}</span> {JSON.stringify(events[0].data).slice(0, 120)}
               </span>
             )}
           </div>
-          <span className="xs faint">⌘K command · / search</span>
+          <span className="xs faint mono">⌘K command · / search</span>
         </footer>
       </div>
 
@@ -227,9 +247,10 @@ function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: 
 
   return (
     <div className="palette-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="palette" onClick={e => e.stopPropagation()}>
+      <div className="palette" onClick={e => e.stopPropagation()} role="dialog" aria-label="Command palette">
         <input
           autoFocus placeholder="Type a command, ask the OS, or search… (⏎ run)"
+          aria-label="Command input"
           value={q}
           onChange={e => { setQ(e.target.value); if (mode === 'search') runSearch(e.target.value); }}
           onKeyDown={e => {
@@ -241,17 +262,17 @@ function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: 
           }}
         />
         {reply && (
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)' }}>
-            <pre className="code" style={{ margin: 0, border: 'none, background: transparent' as any }}>{reply}</pre>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-inset)' }}>
+            <pre className="code" style={{ margin: 0, border: 'none', background: 'transparent' }}>{reply}</pre>
           </div>
         )}
-        {busy && <div style={{ padding: 10, color: 'var(--accent)' }} className="xs">routing through kernel…</div>}
+        {busy && <div style={{ padding: 10, color: 'var(--cyan)' }} className="xs mono">routing through kernel…</div>}
         <div className="results">
           {mode === 'command' && !reply && (
             <>
               {q && !filtered.length && (
                 <div className="item" onClick={() => runCommand(q)}>
-                  <span className="accent">❯</span>
+                  <span style={{ color: 'var(--cyan)' }}>❯</span>
                   <div className="grow">
                     <div className="small" style={{ fontWeight: 600 }}>Ask the OS: “{q}”</div>
                     <div className="xs dim">routes to Hermes agent → planner → tools → memory</div>
