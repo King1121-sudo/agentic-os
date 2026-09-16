@@ -11,3 +11,8 @@ apps/data/
 output/
 *.tsbuildinfo
 .DS_Store
+
+# Browser profile written by automated UI/e2e runs — 246 MB of Chrome state
+# (Cookies, History, Login Data, Session Storage). Never commit: it is a
+# build artifact, and it accumulates live cookies and history over time.
+apps/web/chrome-profile/

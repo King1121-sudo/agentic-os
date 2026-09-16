@@ -21,7 +21,6 @@ export default function ProjectDetail({ params }: { params: Promise<{ id: string
   const tasks = p.tasks ?? [];
   const done = tasks.filter((t: any) => t.status === 'done').length;
   const levelOf = (taskId: string) => (depOrder ?? []).find((o: any) => o.task_id === taskId)?.level;
-  const titleOf = (taskId: string) => (depOrder ?? []).find((o: any) => o.task_id === taskId)?.title ?? taskId.slice(0, 8);
 
   async function addTask() {
     if (!newTask.trim()) return;

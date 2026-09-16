@@ -12,14 +12,11 @@
  *  - a connection is only 'connected' after a successful provider probe
  *  - every capability call checks the connection's granted capability set
  */
-import type { DataPort } from '../../infra/types';
+import { DataPort } from '../../infra/types';
 import { iso, uuid } from '../../infra/types';
-import type { EventBus } from '../../kernel/bus';
+import { EventBus } from '../../kernel/bus';
 import { encryptSecret, decryptSecret } from '../vault';
-import {
-  type ProviderAdapter, type ProviderManifest, type IntegrationConnection, type NormalizedEvent,
-  type AuthMethod, type AdapterCredentials, resolveAuthConfigStatus,
-} from './types';
+import { type ProviderAdapter, type IntegrationConnection, type NormalizedEvent, type AuthMethod, type AdapterCredentials, resolveAuthConfigStatus } from './types';
 import { oauthStart, oauthExchange, oauthRefresh, needsRefresh } from './oauth';
 import { RateLimiter } from './rate-limit';
 

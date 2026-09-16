@@ -17,10 +17,10 @@
  *    layout is seeded on first read.
  */
 import * as crypto from 'crypto';
-import type { DataPort } from '../infra/types';
+import { DataPort } from '../infra/types';
 import { iso, uuid } from '../infra/types';
 import { safeJson } from '../kernel/bus';
-import type { DashboardLayout, DashboardWidget, NotificationPrefs, NotificationRecord } from '@agentic/contracts';
+import { DashboardLayout, DashboardWidget, NotificationPrefs } from '@agentic/contracts';
 
 // ─── VAPID keypair (RFC 8292) ───────────────────────────────────────────────
 

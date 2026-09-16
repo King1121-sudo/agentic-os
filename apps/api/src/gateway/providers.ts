@@ -167,7 +167,7 @@ function extractArgs(tool: string, prompt: string): Record<string, unknown> {
 
   if (tool === 'task.create') {
     let title = '';
-    const m1 = t.match(/(?:task|todo|item)\s+(?:to|for|called|named|titled|[:\-])\s+(.+)$/i);
+    const m1 = t.match(/(?:task|todo|item)\s+(?:to|for|called|named|titled|[:-])\s+(.+)$/i);
     const m2 = t.match(/^(?:create|add|new|make|open)\s+(?:a\s+)?(?:task|todo|item)\s+(?:to\s+)?(.+)$/i);
     const m3 = t.match(/["“']([^"”']{3,120})["”']/);
     title = (m1?.[1] ?? m2?.[1] ?? m3?.[1] ?? t).trim();
@@ -184,7 +184,7 @@ function extractArgs(tool: string, prompt: string): Record<string, unknown> {
   }
 
   if (tool === 'project.create') {
-    const m = t.match(/(?:project|workspace)\s+(?:called|named|titled|for|[:\-])\s+["“']?([A-Za-z0-9][A-Za-z0-9 _-]{1,40})["”']?/i)
+    const m = t.match(/(?:project|workspace)\s+(?:called|named|titled|for|[:-])\s+["“']?([A-Za-z0-9][A-Za-z0-9 _-]{1,40})["”']?/i)
       ?? t.match(/["“']([^"”']{3,40})["”']/);
     const fallback = t.replace(/^(create|add|new|start|make|open)\s+(a\s+)?(project|workspace)\s*/i, '').trim() || 'New Project';
     return { name: m?.[1]?.trim() ?? fallback };

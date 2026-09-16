@@ -13,7 +13,7 @@ import { ToolRegistry, createBuiltinTools, setRuntimeRef } from '../modules/tool
 import { AgentRuntime } from '../modules/runtime';
 import * as store from '../modules/store';
 import { FlowEngine, validateFlow, evalCondition, resolveTemplate, getRun } from '../modules/flows';
-import type { FlowNode, FlowEdge } from '@agentic/contracts';
+import type { FlowNode, FlowEdge, FlowRunRecord } from '@agentic/contracts';
 
 let db: SqliteDataPort;
 let bus: EventBus;
@@ -72,7 +72,7 @@ async function insertFlow(name: string, nodes: FlowNode[], edges: FlowEdge[]): P
   return id;
 }
 
-async function waitForRun(runId: string, timeoutMs = 30000): Promise<any> {
+async function waitForRun(runId: string, timeoutMs = 30000): Promise<FlowRunRecord> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const run = await getRun(db, runId);
@@ -181,7 +181,7 @@ describe('phase 7 — engine execution', () => {
     expect(settled.completed_nodes).toEqual(['t', 'w', 'c', 'done']);
     // memory.write output landed in context
     expect(settled.context.w).toBeDefined();
-    expect(settled.context.w.memory).toBeDefined();
+    expect((settled.context.w as { memory?: unknown }).memory).toBeDefined();
     expect(settled.trace.some(t => t.message.includes('condition'))).toBe(true);
   }, 45000);
 
@@ -259,9 +259,11 @@ describe('phase 7 — engine execution', () => {
     const run = await engine.start(flow as any, userId, {});
     const settled = await waitForRun(run.id, 45000);
     expect(settled.status).toBe('completed');
-    expect(settled.context.a.status).toBe('completed');
-    expect(settled.context.a.execution_id).toBeDefined();
-    expect(settled.context.a.result).toBeTruthy();
+    // context is Record<string, unknown>; assert the shape the agent node writes
+    const a = settled.context.a as { status: string; execution_id?: string; result?: unknown };
+    expect(a.status).toBe('completed');
+    expect(a.execution_id).toBeDefined();
+    expect(a.result).toBeTruthy();
   }, 60000);
 
   it('stop cancels a running flow', async () => {

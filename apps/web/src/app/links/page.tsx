@@ -1,7 +1,7 @@
 'use client';
 import Shell from '@/components/Shell';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, post, usePoll, fmtAgo } from '@/lib/api';
+import { api, post } from '@/lib/api';
 
 /** Node visual metadata by kind. */
 const KIND_COLOR: Record<string, string> = {

@@ -5,7 +5,7 @@
  *
  * Adding a provider = new file here + one registration line in index.ts.
  */
-import type { ProviderAdapter, ProviderManifest, AdapterCredentials } from './types';
+import { ProviderAdapter, ProviderManifest, AdapterCredentials } from './types';
 
 // ─── shared HTTP helper (JSON, timeouts, Retry-After surfacing) ─────────────
 
@@ -621,7 +621,6 @@ export class InstagramPlatformAdapter implements ProviderAdapter {
     return { account: String(data.username), scopes: [], identityKey: `instagram:${data.user_id}`, expiresAt: null };
   }
   async execute(capabilityId: string, cred: AdapterCredentials, args: Record<string, unknown>) {
-    const h = bearer(cred.accessToken);
     if (capabilityId === 'instagram.profile.read') {
       const res = await providerFetch(`https://graph.instagram.com/me?fields=user_id,username,account_type,media_count&access_token=${encodeURIComponent(cred.accessToken)}`, {});
       return ensureOk(res, 'instagram profile');

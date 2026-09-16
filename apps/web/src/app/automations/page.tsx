@@ -1,7 +1,7 @@
 'use client';
 import Shell from '@/components/Shell';
 import { useState } from 'react';
-import { api, post, patch, usePoll, fmtAgo } from '@/lib/api';
+import { api, post, usePoll, fmtAgo } from '@/lib/api';
 
 const TRIGGER_META: Record<string, { icon: string; color: string; hint: string }> = {
   cron:    { icon: '⏰', color: 'var(--amber)', hint: '5-field cron schedule' },

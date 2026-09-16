@@ -15,15 +15,15 @@
  * (default: the node id). Template strings "${ctx.name}" inside node configs
  * resolve against it, so agent inputs/tool args can consume upstream outputs.
  */
-import type { DataPort } from '../infra/types';
+import { DataPort } from '../infra/types';
 import { iso, uuid } from '../infra/types';
-import type { EventBus } from '../kernel/bus';
+import { EventBus } from '../kernel/bus';
 import { safeJson } from '../kernel/bus';
-import type { AgentRuntime } from './runtime';
-import type { ToolRegistry } from './tools';
+import { AgentRuntime } from './runtime';
+import { ToolRegistry } from './tools';
 import * as store from './store';
 import { config as appConfig } from '../config';
-import type { FlowNode, FlowEdge, FlowRecord, FlowRunRecord } from '@agentic/contracts';
+import { FlowNode, FlowEdge, FlowRecord, FlowRunRecord } from '@agentic/contracts';
 
 // ─── persistence ─────────────────────────────────────────────────────────────
 
@@ -50,10 +50,19 @@ export async function getRun(db: DataPort, id: string): Promise<FlowRunRecord | 
   return rows[0] ? parseRun(rows[0]) : null;
 }
 
-export async function listRuns(db: DataPort, flowId?: string, limit = 50): Promise<FlowRunRecord[]> {
-  const rows = flowId
-    ? await db.query<any>('SELECT * FROM flow_runs WHERE flow_id = ? ORDER BY started_at DESC LIMIT ?', [flowId, limit])
-    : await db.query<any>('SELECT * FROM flow_runs ORDER BY started_at DESC LIMIT ?', [limit]);
+/**
+ * Flow runs, newest first. Pass `user_id` to scope to one owner — every HTTP
+ * caller must (see modules/authz.ts). `flow_id` narrows to one flow.
+ */
+export async function listRuns(
+  db: DataPort, opts: { flow_id?: string; user_id?: string; limit?: number } = {},
+): Promise<FlowRunRecord[]> {
+  const conds: string[] = []; const params: unknown[] = [];
+  if (opts.flow_id) { conds.push('flow_id = ?'); params.push(opts.flow_id); }
+  if (opts.user_id) { conds.push('user_id = ?'); params.push(opts.user_id); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  params.push(opts.limit ?? 50);
+  const rows = await db.query<any>(`SELECT * FROM flow_runs ${where} ORDER BY started_at DESC LIMIT ?`, params);
   return rows.map(parseRun);
 }
 
@@ -479,7 +488,6 @@ export class FlowEngine {
           }
           case 'wait': {
             const seconds = Math.min(300, Math.max(1, Number(node.config.seconds ?? 5)));
-            const until = Date.now() + seconds * 1000;
             run.status = 'waiting';
             await persistRun(db, run);
             await bus.emit('flow.waiting', { run_id: run.id, node: node.id, seconds }, { actor_type: 'flow', target_type: 'flow', target_id: flow.id });

@@ -2,14 +2,11 @@
  * Store — repository layer over DataPort. Dialect-neutral SQL, JSON (de)serialization.
  * Every subsystem (tools, runtime, API) goes through these typed functions.
  */
-import type { DataPort } from '../infra/types';
+import { DataPort } from '../infra/types';
 import { iso, uuid } from '../infra/types';
 import { syncEntity } from '../infra/migrations';
 import { safeJson } from '../kernel/bus';
-import type {
-  AgentRecord, TaskRecord, ProjectRecord, SprintRecord, MemoryRecord,
-  NotificationRecord, LinkRecord, ApprovalRecord, ExecutionRecord, SkillRecord, Uuid, Iso,
-} from '@agentic/contracts';
+import { AgentRecord, TaskRecord, ProjectRecord, SprintRecord, NotificationRecord, LinkRecord, ApprovalRecord, ExecutionRecord, SkillRecord, Uuid, Iso } from '@agentic/contracts';
 
 const J = JSON.stringify;
 
@@ -75,8 +72,19 @@ export async function getExecution(db: DataPort, id: string): Promise<ExecutionR
   const rows = await db.query<any>('SELECT * FROM executions WHERE id = ?', [id]);
   return rows[0] ? parseExecution(rows[0]) : null;
 }
-export async function listExecutions(db: DataPort, limit = 50): Promise<ExecutionRecord[]> {
-  const rows = await db.query<any>('SELECT * FROM executions ORDER BY started_at DESC LIMIT ?', [limit]);
+/**
+ * Executions, newest first. Pass `user_id` to scope to one owner — every HTTP
+ * caller must (see modules/authz.ts); omitting it is reserved for internal
+ * system sweeps such as the emergency stop.
+ */
+export async function listExecutions(
+  db: DataPort, opts: { user_id?: string; limit?: number } = {},
+): Promise<ExecutionRecord[]> {
+  const conds: string[] = []; const params: unknown[] = [];
+  if (opts.user_id) { conds.push('user_id = ?'); params.push(opts.user_id); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  params.push(opts.limit ?? 50);
+  const rows = await db.query<any>(`SELECT * FROM executions ${where} ORDER BY started_at DESC LIMIT ?`, params);
   return rows.map(parseExecution);
 }
 export function parseExecution(r: any): ExecutionRecord {
@@ -317,9 +325,29 @@ export async function createApproval(db: DataPort, a: { execution_id: string; ag
   );
   return rec;
 }
-export async function listApprovals(db: DataPort, status = 'pending'): Promise<ApprovalRecord[]> {
-  const rows = await db.query<any>('SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC LIMIT 100', [status]);
+/**
+ * Approvals by status. An approval has no owner column of its own — it
+ * inherits the owning execution's `user_id`, so `user_id` joins through to
+ * `executions`. Omitting it returns the whole queue, which is what the
+ * supervision surfaces (mobile briefing, emergency stop) are for.
+ */
+export async function listApprovals(
+  db: DataPort, opts: { status?: string; user_id?: string; limit?: number } = {},
+): Promise<ApprovalRecord[]> {
+  const status = opts.status ?? 'pending';
+  const limit = opts.limit ?? 100;
+  const rows = opts.user_id
+    ? await db.query<any>(
+      `SELECT a.* FROM approvals a JOIN executions e ON e.id = a.execution_id
+       WHERE a.status = ? AND e.user_id = ? ORDER BY a.created_at DESC LIMIT ?`,
+      [status, opts.user_id, limit])
+    : await db.query<any>(
+      'SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC LIMIT ?', [status, limit]);
   return rows.map(r => ({ ...r, args: safeJson(r.args) }));
+}
+export async function getApproval(db: DataPort, id: string): Promise<ApprovalRecord | null> {
+  const rows = await db.query<any>('SELECT * FROM approvals WHERE id = ?', [id]);
+  return rows[0] ? { ...rows[0], args: safeJson(rows[0].args) } : null;
 }
 export async function decideApproval(db: DataPort, id: string, decision: 'approve' | 'deny', userId: string): Promise<ApprovalRecord | null> {
   await db.run('UPDATE approvals SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?',

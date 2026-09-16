@@ -18,15 +18,15 @@
  * risk (agent execution = medium risk), the fire is SKIPPED with a reason.
  * Every fire — dispatched, skipped, or failed — lands in automation_runs.
  */
-import type { DataPort } from '../infra/types';
+import { DataPort } from '../infra/types';
 import { iso, uuid } from '../infra/types';
-import type { EventBus } from '../kernel/bus';
+import { EventBus } from '../kernel/bus';
 import { safeJson } from '../kernel/bus';
-import type { AgentRuntime } from './runtime';
-import type { FlowEngine } from './flows';
+import { AgentRuntime } from './runtime';
+import { FlowEngine } from './flows';
 import { getFlow } from './flows';
 import * as store from './store';
-import type { AutomationRecord, AutomationRunRecord } from '@agentic/contracts';
+import { AutomationRecord, AutomationRunRecord } from '@agentic/contracts';
 
 // ─── cron parsing (5-field, no deps) ────────────────────────────────────────
 
@@ -63,7 +63,7 @@ function parseCronField(spec: string, min: number, max: number, names?: Record<s
   return { min, max, values };
 }
 
-function resolveName(token: string, names: Record<string, number> | undefined, min: number, max: number): number {
+function resolveName(token: string, names: Record<string, number> | undefined, _min: number, _max: number): number {
   const nameVal = names?.[token.toLowerCase()];
   if (nameVal !== undefined) return nameVal;   // NB: sunday=0 is falsy — compare against undefined
   const n = Number(token);

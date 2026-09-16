@@ -6,6 +6,7 @@ import { JarvisCommandSurface } from './JarvisCommandSurface';
 import { JarvisMetric } from './JarvisMetric';
 import { JarvisStatusDot, toneForAgentStatus } from './JarvisStatusDot';
 import { selectAttentionItems, selectJarvisMode } from '@/lib/jarvis-selectors';
+import { useExecutionStore } from '@/lib/execution-store';
 
 export function JarvisCockpitDashboard({
   d,
@@ -32,7 +33,19 @@ export function JarvisCockpitDashboard({
   counts: Record<string, unknown>;
   onEditDashboard?: () => void;
 }) {
-  const mode = selectJarvisMode({ health, approvals, agents, events });
+  const execStore = useExecutionStore();
+  // Live execution state takes precedence (real runtime, ≤poll-latency);
+  // the polled selector remains the fallback (idle system, approval queue…).
+  const liveStates = execStore.order
+    .map(id => execStore.executions[id]?.state)
+    .filter(Boolean) as string[];
+  const liveMode = liveStates.some(s => s === 'approval_required') ? 'approval_required'
+    : liveStates.some(s => s === 'failed') ? 'error'
+    : liveStates.some(s => s === 'executing' || s === 'completing') ? 'executing'
+    : liveStates.some(s => s === 'planning' || s === 'understanding') ? 'thinking'
+    : liveStates.some(s => s === 'waiting') ? 'waiting'
+    : null;
+  const mode = liveMode ?? selectJarvisMode({ health, approvals, agents, events });
   const attention = selectAttentionItems({ approvals, notes, events });
   const activeAgents = agents.filter(a => a.status !== 'idle');
   const nextTasks = openTasks.slice(0, 5);
@@ -49,8 +62,6 @@ export function JarvisCockpitDashboard({
   // dashboard counts carry executions/memories/generations/tool_runs; health
   // counts carry tasks/events/entities — merge so every metric has data.
   const mergedCounts = { ...(health?.counts ?? {}), ...counts };
-  const attentionTone = attention.some(i => i.kind === 'approval')
-    ? 'waiting' : attention.length ? 'warn' : 'default';
 
   return (
     <div className="jarvis-cockpit" aria-label="JARVIS command center">

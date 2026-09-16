@@ -546,7 +546,22 @@ table.tbl td.num, table.tbl th.num { text-align: right; font-family: var(--mono)
   animation: jarvisBreathe 4s ease-in-out infinite;
 }
 .jarvis-core-mark { font-weight: 700; font-size: 30px; color: var(--cyan-bright); text-shadow: 0 0 18px rgba(57, 208, 216, 0.4); }
+/* ── state-specific breathing (§5): one organic keyframe family, per-state
+   duration/amplitude. Presence, never progress. Reduced-motion flattens all. */
+.jarvis-core.mode-idle .jarvis-core-nucleus { animation: jarvisBreatheIdle 6.5s ease-in-out infinite; }
+.jarvis-core.mode-listening .jarvis-core-nucleus { animation: jarvisBreatheListen 3.4s ease-in-out infinite; }
+.jarvis-core.mode-thinking .jarvis-core-nucleus { animation: jarvisBreatheThink 5.2s ease-in-out infinite; }
+.jarvis-core.mode-executing .jarvis-core-nucleus { animation: jarvisBreatheExec 2.6s ease-in-out infinite; }
+.jarvis-core.mode-waiting .jarvis-core-nucleus { animation: jarvisBreatheIdle 9s ease-in-out infinite; }
+.jarvis-core.mode-approval_required .jarvis-core-nucleus { animation: jarvisBreatheAttention 1.6s ease-in-out infinite; }
+.jarvis-core.mode-error .jarvis-core-nucleus { animation: jarvisBreatheError 0.9s ease-in-out 3; border-color: var(--red); }
 @keyframes jarvisBreathe { 0%, 100% { opacity: 0.85; transform: scale(1); } 50% { opacity: 1; transform: scale(1.04); } }
+@keyframes jarvisBreatheIdle { 0%, 100% { opacity: 0.62; transform: scale(0.985); } 50% { opacity: 0.8; transform: scale(1.012); } }
+@keyframes jarvisBreatheListen { 0%, 100% { opacity: 0.8; transform: scale(1); } 50% { opacity: 1; transform: scale(1.05); } }
+@keyframes jarvisBreatheThink { 0%, 100% { opacity: 0.72; transform: scale(0.99); } 50% { opacity: 1; transform: scale(1.045); } }
+@keyframes jarvisBreatheExec { 0%, 100% { opacity: 0.85; transform: scale(1); } 50% { opacity: 1; transform: scale(1.055); } }
+@keyframes jarvisBreatheAttention { 0%, 100% { opacity: 0.9; transform: scale(1); } 50% { opacity: 1; transform: scale(1.07); } }
+@keyframes jarvisBreatheError { 0%, 100% { opacity: 0.5; transform: scale(0.96); } 50% { opacity: 0.95; transform: scale(1.03); } }
 
 .jarvis-core.mode-approval_required .jarvis-core-ring { border-color: rgba(255, 180, 84, 0.6); }
 .jarvis-core.mode-approval_required .ring-c { animation: jarvisPulse 1.2s ease-in-out infinite; }
@@ -585,6 +600,12 @@ table.tbl td.num, table.tbl th.num { text-align: right; font-family: var(--mono)
 .jarvis-command-input-row input { background: var(--bg-inset); border-color: var(--line); font-size: 13.5px; }
 .jarvis-command-input-row input:focus { border-color: var(--cyan); }
 .jarvis-command-message { margin-top: 8px; }
+.jarvis-ack {
+  display: flex; gap: 8px; align-items: baseline; margin-top: 10px;
+  font-size: 13px; color: var(--cyan-bright);
+}
+.jarvis-ack-glyph { color: var(--cyan); flex-shrink: 0; }
+.jarvis-result-card { margin-top: 10px; border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 4px; background: var(--bg-inset); }
 .jarvis-command-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .jarvis-command-suggestions button { font-size: 11.5px; padding: 3px 10px; }
 .jarvis-command-results { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
@@ -625,7 +646,83 @@ table.tbl td.num, table.tbl th.num { text-align: right; font-family: var(--mono)
 .jarvis-hud-strip .jarvis-metric { flex: 1 1 130px; }
 .jarvis-hud-strip button { align-self: center; }
 
-/* -- approvals banner (topbar) -- */
+/* -- live execution panel (real activity, two info levels) -- */
+.live-exec {
+  margin-top: 14px; border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--bg-panel); padding: 14px 16px;
+}
+.live-exec.is-approval_required { border-color: rgba(255, 180, 84, 0.4); }
+.live-exec.is-failed { border-color: rgba(255, 93, 93, 0.4); }
+.live-exec.is-completed { border-color: rgba(46, 230, 168, 0.3); }
+.live-exec-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.live-exec-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.exec-agent-badge {
+  width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--cyan);
+  background: radial-gradient(circle at 38% 34%, rgba(57, 208, 216, 0.25), rgba(6, 16, 22, 0.9) 70%);
+  animation: jarvisBreatheExec 2.6s ease-in-out infinite;
+}
+.live-exec:not(.is-active) .exec-agent-badge { animation: none; opacity: 0.75; }
+.exec-agent-badge.exec-approval { border-color: var(--orange); animation: jarvisBreatheAttention 1.6s ease-in-out infinite; }
+.exec-agent-badge.exec-failed { border-color: var(--red); animation: none; }
+.exec-agent-badge.exec-waiting { border-color: rgba(255, 180, 84, 0.5); animation: jarvisBreatheIdle 9s ease-in-out infinite; }
+.exec-agent-initial { font-weight: 700; font-size: 15px; color: var(--cyan-bright); }
+.exec-agent-badge.exec-approval .exec-agent-initial { color: var(--orange); }
+.exec-agent-badge.exec-failed .exec-agent-initial { color: var(--red); }
+.exec-state-label {
+  font-size: 10px; font-family: var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--cyan-bright);
+}
+.exec-state-label.exec-approval { color: var(--orange); }
+.exec-state-label.exec-waiting { color: var(--orange); }
+.exec-state-label.exec-completed { color: var(--green); }
+.exec-state-label.exec-failed, .exec-state-label.exec-cancelled { color: var(--red); }
+
+.live-activity { list-style: none; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; padding: 2px 0; }
+.activity-line { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; padding: 2px 4px; border-radius: 4px; }
+.activity-line .activity-icon { font-size: 10px; flex-shrink: 0; width: 12px; text-align: center; }
+.activity-line .activity-icon[style*="--cyan"] { animation: jarvisPulse 1.4s ease-in-out infinite; }
+.activity-line .activity-label { color: var(--fg-dim); }
+.activity-line.icon-done .activity-label { color: var(--fg-dim); }
+.activity-line.icon-active .activity-label { color: var(--fg); }
+.activity-line .activity-detail { color: var(--fg-faint); margin-left: auto; text-align: right; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-activity:empty { display: none; }
+
+.approval-inline {
+  border: 1px solid rgba(255, 180, 84, 0.4); background: var(--orange-soft);
+  border-radius: var(--r-md); padding: 10px 12px; margin-bottom: 10px;
+}
+.exec-failure {
+  border: 1px solid rgba(255, 93, 93, 0.4); background: var(--red-soft);
+  border-radius: var(--r-md); padding: 10px 12px; margin-bottom: 10px;
+}
+.live-stream { margin-top: 10px; border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 8px 10px; background: var(--bg-inset); }
+.live-stream-text { white-space: pre-wrap; word-break: break-word; max-height: 130px; overflow-y: auto; color: var(--fg); }
+.live-result { margin-top: 10px; }
+.live-exec-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); justify-content: space-between; }
+
+/* -- topbar active-operations indicator -- */
+.active-ops {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
+  color: var(--cyan-bright); border: 1px solid var(--line-strong);
+  border-radius: 999px; padding: 3px 11px; background: var(--accent-soft);
+  cursor: pointer; position: relative;
+}
+.active-ops:hover { background: rgba(57, 208, 216, 0.18); }
+.active-ops .ops-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); animation: jarvisPulse 1.4s ease-in-out infinite; }
+.active-ops-pop {
+  position: absolute; top: 40px; right: 0; width: 360px; max-height: 380px; overflow-y: auto;
+  background: var(--bg-panel-solid); border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-3); padding: 6px; z-index: 55;
+}
+.active-ops-row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--r-sm); }
+.active-ops-row:hover { background: var(--bg-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .exec-agent-badge, .activity-line .activity-icon[style*="--cyan"], .active-ops .ops-pulse { animation: none !important; }
+}
 .approval-banner {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   padding: 8px 18px; border-bottom: 1px solid rgba(255, 180, 84, 0.25);

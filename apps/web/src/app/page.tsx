@@ -1,9 +1,9 @@
 'use client';
 import Shell from '@/components/Shell';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, post, usePoll, patch } from '@/lib/api';
-import type { AgentRecord, TaskRecord, ProjectRecord, NotificationRecord, OsEvent } from '@agentic/contracts';
+import { useCallback, useEffect, useState } from 'react';
+import { api, post, usePoll } from '@/lib/api';
+import { AgentRecord, TaskRecord, ProjectRecord, NotificationRecord, OsEvent } from '@agentic/contracts';
 import { JarvisCockpitDashboard } from '@/components/jarvis/JarvisCockpitDashboard';
 
 /** Dashboard wire shape (GET /api/dashboard). */

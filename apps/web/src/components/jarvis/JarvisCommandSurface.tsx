@@ -1,12 +1,18 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { api, post } from '@/lib/api';
+import { useExecutionStore, useLatestExecution, type LiveExecution } from '@/lib/execution-store';
+import { LiveExecutionPanel } from './LiveExecutionPanel';
 
 /**
- * Voice states per the voice-first architecture: IDLE, LISTENING, PROCESSING,
- * SPEAKING, INTERRUPTED, ERROR. Text and voice share the same routing
- * (POST /api/command) — never a separate logic path.
+ * The JARVIS command surface. Text and voice share ONE routing path
+ * (POST /api/command → runtime → SSE events → ExecutionStore → UI).
+ *
+ * Flow (§0): command → immediate ack (from the API response, honest intent) →
+ * execution registered in the store → LiveExecutionPanel streams the real
+ * activity → result/panel coexist inline. Complexity-aware (§21): local
+ * `kind:'result'` answers render as a quiet result card; agent executions get
+ * the full live panel. Navigating away is never required.
  */
 type VoiceState =
   | { status: 'idle' }
@@ -34,14 +40,17 @@ const SUGGESTIONS = [
 ];
 
 export function JarvisCommandSurface({ compact = false }: { compact?: boolean }) {
-  const router = useRouter();
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'command' | 'search'>('command');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [ack, setAck] = useState<string | null>(null);
+  const [resultCard, setResultCard] = useState<{ text: string } | null>(null);
   const [results, setResults] = useState<any[]>([]);
   const [voice, setVoice] = useState<VoiceState>({ status: 'idle' });
+  const [dismissed, setDismissed] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const store = useExecutionStore();
+  const latest = useLatestExecution();
 
   const routeMatches = useMemo(() => {
     const q = text.trim().toLowerCase();
@@ -54,33 +63,44 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
       const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
       setResults(Array.isArray(res) ? res.slice(0, 8) : []);
     } catch (e: any) {
-      setMessage(`Search error: ${e.message}`);
+      setAck(`Search error: ${e.message}`);
     }
   }, []);
 
+  // §7/§31 — the ack is honest and immediate: it names what the backend will
+  // actually do (agent or instant answer), from the API response itself.
   const submitCommand = useCallback(async (commandText = text) => {
     const q = commandText.trim();
     if (!q) return;
     setBusy(true);
-    setVoice({ status: 'processing', text: q });
-    setMessage('Routing intent through kernel…');
+    setResultCard(null);
+    setDismissed(null);
+    setAck('Acknowledged — routing…');
+    store.trackCommand(q);
     try {
       const res = await post<any>('/api/command', { text: q });
+      // the backend ack is authoritative — show it verbatim
+      if (res?.ack) setAck(res.ack);
       if (res?.kind === 'execution' && res.execution_id) {
-        router.push(`/activity?exec=${encodeURIComponent(res.execution_id)}`);
-      } else {
-        setMessage(res?.text ?? 'Command completed.');
+        // register the REAL execution; SSE drives everything from here
+        store.register(res.execution_id, {
+          agent: res.agent_name ?? 'Agent',
+          ack: res.ack,
+          input: q,
+          state: 'received',
+        });
+      } else if (res?.text) {
+        // simple/instant answer — quiet result card, no execution theater (§21/§41)
+        setResultCard({ text: res.text });
       }
       setText('');
     } catch (e: any) {
-      setMessage(`Command error: ${e.message}`);
+      setAck(`Command failed: ${e.message}`);
       setVoice({ status: 'error', message: e.message });
     } finally {
       setBusy(false);
-      // return to idle after a short processing beat (state stays visible meanwhile)
-      setTimeout(() => setVoice(v => v.status === 'processing' ? { status: 'idle' } : v), 900);
     }
-  }, [router, text]);
+  }, [text, store]);
 
   useEffect(() => {
     if (mode === 'search') runSearch(text);
@@ -89,7 +109,7 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
   // -- voice: same command path, Web Speech API ------------------------------
   const startVoice = useCallback(() => {
     const Ctor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!Ctor) { setVoice({ status: 'unsupported' }); setMessage('Voice recognition is not supported in this browser.'); return; }
+    if (!Ctor) { setVoice({ status: 'unsupported' }); setAck('Voice recognition is not supported in this browser.'); return; }
     try { recognitionRef.current?.abort?.(); } catch { /* stale */ }
     const rec = new Ctor();
     rec.continuous = false;
@@ -97,7 +117,7 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     rec.lang = 'en-US';
     recognitionRef.current = rec;
     setVoice({ status: 'listening', interim: '' });
-    setMessage('Listening… review the transcript before submitting.');
+    setAck('Listening… review the transcript before submitting.');
     rec.onresult = (event: any) => {
       let transcript = '';
       for (let i = event.resultIndex; i < event.results.length; i++) transcript += event.results[i][0].transcript;
@@ -106,7 +126,7 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     };
     rec.onerror = (event: any) => {
       setVoice({ status: 'error', message: event.error ?? 'unknown' });
-      setMessage(`Voice error: ${event.error ?? 'unknown'}`);
+      setAck(`Voice error: ${event.error ?? 'unknown'}`);
     };
     rec.onend = () => setVoice(s => s.status === 'listening' ? { status: 'idle' } : s);
     rec.start();
@@ -117,7 +137,6 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     setVoice({ status: 'idle' });
   }, []);
 
-  // cleanup on unmount
   useEffect(() => () => { try { recognitionRef.current?.abort?.(); } catch { /* */ } }, []);
 
   const voiceChipClass = voice.status === 'listening' ? 'is-listening' : voice.status === 'processing' ? 'is-processing' : voice.status === 'error' ? 'is-error' : '';
@@ -126,6 +145,8 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
     : voice.status === 'error' ? 'ERROR'
     : voice.status === 'unsupported' ? 'UNSUPPORTED'
     : '';
+
+  const panel: LiveExecution | null = latest && dismissed !== latest.id ? latest : null;
 
   return (
     <section className={`jarvis-command ${compact ? 'compact' : ''}`} aria-label="JARVIS command surface">
@@ -147,24 +168,40 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
           onKeyDown={e => { if (e.key === 'Enter') submitCommand(); }}
           aria-label="JARVIS command input"
         />
-        <button className="primary" disabled={busy || !text.trim()} onClick={() => submitCommand()}>{busy ? 'Routing…' : 'Run'}</button>
+        <button className="primary" disabled={busy || !text.trim()} onClick={() => submitCommand()}>{busy ? 'Sending…' : 'Run'}</button>
       </div>
-      {message && (
-        <div className="jarvis-command-message xs dim" role="status">{message}</div>
+
+      {ack && (
+        <div className="jarvis-ack" role="status">
+          <span className="jarvis-ack-glyph" aria-hidden="true">❯</span>
+          <span>{ack}</span>
+        </div>
       )}
+
       {voice.status === 'listening' && voice.interim && (
         <div className="xs mono" style={{ marginTop: 6, color: 'var(--cyan-bright)' }} role="status">
           heard: “{voice.interim}”
         </div>
       )}
-      {mode === 'command' && routeMatches.length > 0 && (
+
+      {/* the live execution — real state only, inline, no navigation */}
+      {panel && <LiveExecutionPanel exec={panel} onClose={() => setDismissed(panel.id)} />}
+
+      {/* instant answers — quiet card, never execution theater */}
+      {resultCard && (
+        <div className="jarvis-result-card" role="status">
+          <pre className="code" style={{ margin: 0, maxHeight: 260, overflowY: 'auto' }}>{resultCard.text}</pre>
+        </div>
+      )}
+
+      {mode === 'command' && routeMatches.length > 0 && !panel && !resultCard && (
         <div className="jarvis-command-suggestions">
           {routeMatches.map(route => (
-            <button key={route.href} onClick={() => router.push(route.href)}>↳ {route.label}</button>
+            <button key={route.href} onClick={() => { window.location.href = route.href; }}>↳ {route.label}</button>
           ))}
         </div>
       )}
-      {mode === 'command' && !text && (
+      {mode === 'command' && !text && !panel && !resultCard && (
         <div className="jarvis-command-suggestions" aria-label="Suggested commands">
           {SUGGESTIONS.map(s => (
             <button key={s} onClick={() => { setText(s); submitCommand(s); }}>❯ {s}</button>
@@ -181,6 +218,9 @@ export function JarvisCommandSurface({ compact = false }: { compact?: boolean })
             </div>
           ))}
         </div>
+      )}
+      {!store.connected && (
+        <div className="xs" style={{ marginTop: 8, color: 'var(--orange)' }} role="status">Reconnecting to live stream…</div>
       )}
     </section>
   );

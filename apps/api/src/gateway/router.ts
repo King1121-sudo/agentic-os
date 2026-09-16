@@ -8,13 +8,13 @@
  * Automatic fallback: if a provider errors mid-request, the next candidate is tried.
  * Every generation is recorded with model, tokens, latency, cost (§21).
  */
-import type { ModelProviderPort, ModelRequest, ModelResponse } from '../kernel/types';
-import type { Capability } from '@agentic/contracts';
-import type { DataPort } from '../infra/types';
+import { ModelProviderPort, ModelRequest, ModelResponse } from '../kernel/types';
+import { Capability } from '@agentic/contracts';
+import { DataPort } from '../infra/types';
 import { iso } from '../infra/types';
-import { heuristicPlan, estimateTokens } from './providers';
+import { estimateTokens } from './providers';
 import { lookupCosts } from './costs';
-import type { Plan } from '@agentic/contracts';
+
 
 interface RouterModel {
   id: string; model_id: string; provider_id: string; capabilities: Capability[];
@@ -47,7 +47,6 @@ export class ModelRouter {
       // persist provider
       const now = iso();
       const exists = await this.db.query('SELECT id FROM model_providers WHERE id = ?', [p.id]);
-      const modelCount = p.kind === 'builtin' ? modelIds.length : modelIds.length;
       if (exists.length === 0) {
         await this.db.run(
           'INSERT INTO model_providers (id, name, kind, base_url, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
@@ -177,7 +176,7 @@ export class ModelRouter {
     signal?: AbortSignal,
   ): Promise<ModelResponse> {
     const cands = this.candidates(req.capability, opts.preference);
-    const tryOne = async (cand: RouterModel, started: any): Promise<ModelResponse> => {
+    const tryOne = async (cand: RouterModel, _started: any): Promise<ModelResponse> => {
       const provider = this.providers.get(cand.provider_id)!;
       if (provider.generateStream) {
         return provider.generateStream(req, cand.model_id, (d) => onToken(d, { model_id: cand.id }), signal);
@@ -206,7 +205,6 @@ export class ModelRouter {
     };
 
     if (cands.length === 0) {
-      const builtin = this.providers.get('builtin')!;
       const started = await this.recordStart(newGenId(), {
         id: 'builtin:planner', model_id: 'planner', provider_id: 'builtin',
         capabilities: [], priority: 0, cost_in: 0, cost_out: 0,

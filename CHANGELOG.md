@@ -1,5 +1,182 @@
 # Changelog
 
+## 0.18.0 — Route modules (2026-09-16)
+
+`apps/api/src/app.ts` was 1347 lines holding 118 routes for thirteen different
+subsystems — the file every change had to touch. It is now a 58-line composition
+root; the routes live in `routes/*.ts`, one module per subsystem.
+
+### Changed
+- **`app.ts` split into 13 route modules** (`apps/api/src/routes/`): `auth`,
+  `agents`, `memory`, `projects`, `flows`, `automations`, `integrations`,
+  `graph`, `approvals`, `notifications`, `telemetry`, `command`, `supervision`.
+  Largest module is 223 lines; `app.ts` is 58.
+- **Route bodies moved verbatim** — no rewriting, no "while I'm here" edits. Each
+  module destructures the deps it needs from a shared `RouteContext`
+  (`routes/context.ts`), so a body is byte-identical to what it was inline. That
+  is what makes the parity check below meaningful.
+- `ApiDeps` is now an alias of `RouteContext`; `buildApi` registers the modules
+  in order. Shared helpers (`getCookie`, `SESSION_COOKIE`/`SESSION_DAYS`,
+  `scopesForTools`, `safeParse`) moved into `routes/context.ts`.
+- Adding or removing a subsystem is now a one-line change in the composition root.
+
+### Added
+- **`scripts/smoke.sh`** (+ `npm run smoke`) — a live HTTP smoke test against a
+  real running API: the auth guard, every route module, the five command-center
+  branches, and the SSE stream. The vitest suite drives the app in-process via
+  `app.inject()`, so this covers what only breaks over a real socket.
+
+### Verified
+- **Route parity: 118 routes before, 118 after — the route sets diff IDENTICAL**
+  (compared against `git show HEAD:apps/api/src/app.ts`).
+- **`npm test` → 189/189** · `npm run lint` → 0 errors · `npm run typecheck` → 0
+  errors (api + api tests + web).
+- **Live smoke: 39/39** against a booted API on a real port — health, the 401
+  guard, login/session, all 13 modules, all five command branches, SSE handshake.
+
+## 0.17.0 — Verification gate (2026-09-16)
+
+The repo had no linter and no CI, which is how a multi-user authorization gap
+could ship unnoticed. This adds the gate, then pays down what it found.
+
+### Added
+- **ESLint 9 flat config** (`eslint.config.mjs`) covering the API, contracts and
+  the Next.js app, with `typescript-eslint` and `eslint-plugin-react-hooks`.
+  Deliberate relaxations are documented inline with reasons, not silently
+  disabled.
+- **A ratchet, not a wish list.** `npm run lint` passes `--max-warnings=884` —
+  the exact warning count when the gate landed. New warnings fail the build;
+  existing debt does not. The number only ever goes down.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): `npm ci` → lint →
+  typecheck → test → build on every push to `master`/`main` and every PR, with
+  `--max-warnings` making lint a real gate.
+- **`tsconfig.test.json`** for the API, wired into `npm run typecheck`. Test
+  files were excluded from `tsconfig.json` so the build never emits them — but
+  that also meant a type error inside a test was invisible until the test ran.
+- Scripts: `lint`, `lint:fix`, `typecheck`, `verify`.
+
+### Fixed (found by the new gate)
+- **Dead code — 52 unused bindings** removed. Two were worth more than tidying:
+  - `gateway/router.ts`: `const modelCount = p.kind === 'builtin' ? modelIds.length : modelIds.length;` — **both branches identical**, so the value could never differ. Removed.
+  - `app.ts` `/api/health`: a provider-status local computed on every request and never returned (the response uses a separate DB query instead).
+- **`phase11.test.ts`**: `expect(ids).not.toContain(expect.anything && undefined)` — the argument always evaluated to `undefined`, so the assertion tested nothing. Replaced with a real check that every graph ref is a `"<kind>:<slug>"` string.
+- **`phase12.test.ts`**: `flowEngine.getRun?.(...)` called a method `FlowEngine` does not have, so the `??` fallback dynamic-import ran on every invocation. Now calls the module's `getRun` directly.
+- **Test type errors (9, then 11)** — invisible before because tests were
+  untypechecked. Root causes fixed rather than annotated over:
+  `waitForRun` was typed `Promise<any>`, which made every downstream callback
+  implicitly `any`; typing it `Promise<FlowRunRecord>` removed three annotations
+  and surfaced two genuine `context` shape errors that were then fixed properly.
+- Unnecessary regex escapes (`[:\-]`, `[.\/\\]`) — no behaviour change.
+
+### Notes
+- `@typescript-eslint/no-require-imports` is **off** for the API: it compiles to
+  CommonJS, and every `require()` there lazy-loads an *optional* dependency
+  (`redis`, `pg`, `node:sqlite`, `child_process`, `dotenv`) so the kernel still
+  boots with zero drivers installed. The rule is ESM-oriented.
+- React Compiler advisories from `react-hooks` v7 (11) are `warn`, not `error`:
+  they flag real patterns (`setState` synchronously in an effect, `Date.now()`
+  during render, ref access in a render body) but every fix changes component
+  behaviour and the web app has no UI test coverage to catch a regression. They
+  stay visible in every lint run.
+
+### Verified
+- `npm run lint` → **0 errors**, 884 warnings (= the ceiling) · `npm run
+  typecheck` → 0 errors (api + api tests + web) · `npm test` → **189/189** ·
+  `npm run build` → contracts + api green; `apps/web` compiles and generates
+  15/15 pages (its final Turbopack cache-cleanup step is blocked by this
+  environment's bulk-delete guard — a sandbox artifact, not a build failure).
+
+## 0.16.0 — Authorization & repository hygiene (2026-09-16)
+
+Closes a multi-user data-isolation gap: several routes exposed or controlled
+other users' records. Also purges a 246 MB browser profile from git and
+re-aligns the documentation, which had drifted three versions behind.
+
+### Security
+- **Owner-scoped executions** (`modules/authz.ts`, `app.ts`): `GET /api/executions`
+  no longer returns every user's executions (inputs, plans, traces, results).
+  `GET /api/executions/:id`, `GET …/children`, and `POST …/pause|resume|stop` now
+  require ownership — previously any authenticated user could read, pause or stop
+  another user's running execution.
+- **Owner-scoped working memory**: `GET /api/executions/:id/working-memory` and
+  `POST …/facts` (pinned memories + step facts) were readable and writable by any
+  authenticated user.
+- **Owner-scoped approvals**: `GET /api/approvals` returned the global queue, and
+  `POST /api/approvals/:id/decision` let any user approve a high-risk tool call
+  (e.g. `shell.run`) on someone else's execution. The check now lives inside
+  `AgentRuntime.resolveApproval`, so every caller is covered, not just the route.
+- **Owner-scoped generations**: `GET /api/generations` (and its `execution_id`
+  filter) leaked model inputs/outputs; now joined through `executions`.
+- **Owner-scoped flow runs**: `GET /api/flow-runs/:id` and `POST …/pause|resume|stop`,
+  plus `GET /api/flows/:id/runs`, now respect `flow_runs.user_id`.
+- **Per-user dashboard counts** and **universal search**: `/api/dashboard` counts
+  and `/api/search` generation hits are now scoped; search no longer surfaces
+  another user's model output.
+- **Policy**: a non-owner receives `404`, never `403` — a 403 would confirm the
+  record exists. Ownerless rows (`NULL`/empty owner: seeded data, and rows written
+  by an automation or tool with no user in context) stay shared, preserving the
+  pre-existing behaviour for system rows. Full model: `docs/authorization.md`.
+
+### Added
+- `modules/authz.ts` — `ownerOf` / `isOwnedBy` / `requireOwned` and the shared
+  `NOT_FOUND` body.
+- `tests/authz.test.ts` — 19 tests over two real login sessions asserting the
+  non-owner gets 404 **and that the record was not mutated** (a denial that
+  partially applies is still a failure). Mutation-verified: disabling the guards
+  fails 11 of the 19.
+
+### Changed
+- `store.listExecutions`, `store.listApprovals` and `flows.listRuns` take an
+  options object with an optional `user_id`. Omitting it is now reserved for
+  internal system sweeps; every HTTP caller passes it.
+- `store.getApproval` added (needed to resolve an approval's owning execution).
+
+### Fixed
+- **Repository hygiene**: `apps/web/chrome-profile/` — a 246 MB Chrome profile
+  (1504 tracked files, including `Network/Cookies`, `History`, `Login Data`,
+  `Secure Preferences`, `Session Storage`) — was committed. Removed from the
+  index and added to `.gitignore`; tracked files drop from 1640 to 136. The
+  working copy is untouched. History still contains the blobs (`.git` is 117 MB);
+  reclaiming that needs a deliberate `git filter-repo` pass.
+- **Documentation drift**: `package.json`, `apps/*/package.json`,
+  `apps/api/src/config.ts`, `README.md` and `ARCHITECTURE.md` all still said
+  `0.12.0` / "149 tests" / "Phases 1–12" while `ROADMAP.md` and `CHANGELOG.md`
+  said `0.15.0` / 170 tests. `ARCHITECTURE.md` also claimed "Ten migrations
+  (`sql/001…010`)" and "41 tables" — the real numbers are eleven migrations and
+  46 tables. All declarations now agree, and `ARCHITECTURE.md` gained an
+  authorization section (§9) with the residual gaps stated explicitly.
+
+### Verified
+- `npm test` → **189/189** (170 existing + 19 new) · `tsc` → 0 errors.
+- Two-session matrix: owner succeeds, non-owner 404s, target record unmodified.
+- Builds: `packages/contracts` + `apps/api` `tsc` green; `apps/web` `next build`
+  compiles clean and generates 15/15 pages. (Next's final Turbopack cache-cleanup
+  step is blocked by this environment's bulk-delete guard — a sandbox artifact,
+  not a build failure. No web source was modified in this release.)
+
+## 0.15.0 — JARVIS Real Agent Experience (2026-09-09)
+
+The interaction layer now behaves like the runtime it visualizes: commands are acknowledged instantly with honest intent, executions are visible while they run, and the JARVIS presence is driven by real state end to end. No fake activity anywhere — every line in the execution panel is a real bus event.
+
+### Added
+- **Command acknowledgement (§7)**: every command returns an `ack` — a natural first-person statement naming what will actually happen ("I'll route this to Researcher — follow the execution as it runs.", "I'll pull the rollup for Aurora — progress, blockers, sprints, milestones."). All 10 command-center routes carry honest acks; `command.acknowledged` lands on the event bus with kind + agent. Contract: additive `ack` field + `command.acknowledged` EventType (contracts rebuilt).
+- **ExecutionStore** (`apps/web/src/lib/execution-store.tsx`): ONE client-side source of truth for live execution state, mounted at the root layout so it survives navigation (§22/§45). Fed by the existing SSE stream, idempotent by event id (§34), bounded buffers (§36), reconciles against `/api/executions` on reconnect (§35). Maps every existing runtime event (agent.started/thinking/executing, plan.created, tool.executed/denied/failed, skill.executed/denied, approval.requested/decided, agent.paused/resumed/stopped/completed/failed, memory.working.opened, agent.token streaming) into a normalized execution timeline — zero new backend events invented.
+- **LiveExecutionPanel** (`LiveExecutionPanel.tsx`): the "watch it work" surface, inline under the command input. Real agent badge with state-specific breathing, human-friendly activity lines (§13 Level 1) with expandable technical details (Level 2: tool latency, plan rationale, timestamps), streaming response buffer, inline Approve/Deny when the execution is genuinely paused on `approval_required`, Pause/Resume/Stop controls wired to the real runtime endpoints, honest failure surface, live elapsed timer, "Full trace ↗" into the Activity inspector.
+- **Global active-operations indicator (§23/§33)**: topbar shows `● N ACTIVE AGENTS` with a popover of who's doing what, from anywhere in the OS.
+- **State-specific breathing (§5)**: the JARVIS Core's nucleus now breathes per real state — idle (near-still 6.5s), listening (3.4s), thinking (slow deep 5.2s), executing (rhythmic 2.6s), waiting (9s subdued), approval_required (attention 1.6s), error (short triple pulse). One keyframe family, transform/opacity only, flattened under `prefers-reduced-motion`; text state label always accompanies it (§38).
+- **5 new tests** (`jarvis.test.ts`, 170 total): ack presence + honest-content contract, `command.acknowledged` bus landing + ordering, execution commands returning id+agent immediately, and a real execution driving to terminal state with its full event chain asserted — all through the real Fastify app with a real login session.
+
+### Changed
+- **Command surface behavior**: execution commands no longer navigate away. The command stays on Home; the live panel streams in beneath it; simple local answers render as a quiet result card (§21/§41 complexity-aware: no execution theater for instant answers). The Shell footer ticker was replaced by the store-driven connection state; the palette registers executions into the global store and closes with the ack visible.
+- **JARVIS Core mode** now derives from live ExecutionStore state first (≤SSE latency), falling back to the polled agent/health selector — and gained a real `waiting` mode.
+
+### Fixed
+- **Stale command-center copy (§31)**: the "schedule" branch still said automations were "Phase 8 in ROADMAP" — they shipped in Phase 8 (0.8.0). Now answers with real, current guidance (Automations page, trigger types, webhook secret).
+- **Command surface "navigate away" UX**: `kind:'execution'` used to redirect to /activity, destroying the in-progress feeling; the trace viewer on /activity remains the deep-inspection surface.
+
+### Verified live
+- Complex command (§42): ack → execution created → Researcher active → activity streamed (context memories, plan, steps) → completed → panel retained. **Approval flow (§24)**: task.create command → Hermes genuinely paused on `approval_required` → Approve via UI → resumed → completed → core returned to STANDBY; the created task is real. **Cancellation (§44)**: 300s-wait flow run → stop → `cancelled` (real backend state). **Background (§45)**: store lives at the root; executions continue streaming while navigating. **Simple command (§41)**: instant local answers render as a result card, no timeline. 8-branch ack matrix all honest; ack for already-connected integrations named the real account. Mobile briefing unchanged (nominal).
+
 ## 0.14.0 — JARVIS UI/UX Transformation (2026-09-09)
 
 ### Redesigned

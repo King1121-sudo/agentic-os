@@ -14,21 +14,16 @@ import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
 import { InProcessBroker } from '../infra/broker';
 import { EventBus } from '../kernel/bus';
-import { IntegrationService, redactSecrets } from '../modules/integrations/service';
+import { redactSecrets } from '../modules/integrations/service';
 import { createIntegrationPlatform } from '../modules/integrations/index';
 import { oauthStart, oauthExchange, oauthRefresh, needsRefresh, scopesForCapabilities, resolveOAuthFlow } from '../modules/integrations/oauth';
-import { gmailManifest, youtubeManifest, GmailPlatformAdapter, YouTubePlatformAdapter } from '../modules/integrations/providers';
+import { gmailManifest, youtubeManifest } from '../modules/integrations/providers';
 import { encryptSecret, decryptSecret, __resetVaultKeyForTests } from '../modules/vault';
 
 let db: SqliteDataPort;
 let bus: EventBus;
 const uid = () => crypto.randomUUID();
-const now = () => new Date().toISOString();
 const USER = uid();
-
-const mockGoogleUserinfo = (sub: string, email: string) =>
-  vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-    new Response(JSON.stringify({ sub, email, name: 'Test User' }), { status: 200 }));
 
 const mockToken = (opts: { access: string; refresh?: string; expiresInS: number }) =>
   vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
@@ -172,7 +167,6 @@ describe('google oauth — shared connection + capability authorization', () => 
     expect(famRef.length).toBeGreaterThan(0);
     const gmailRow = await db.query<any>("SELECT id FROM integration_connections WHERE provider = 'gmail' AND user_id = ?", [USER]);
     // the family_vault_id pointer ON the youtube row decrypts to the gmail row id
-    const svc2 = createIntegrationPlatform({ db, bus });
     const pointerVal = famRef.map((r: any) => r.ciphertext).find((ct: string) => {
       try { return decryptSecret(ct) === gmailRow[0].id; } catch { return false; }
     });
@@ -262,7 +256,7 @@ describe('google oauth — refresh + reauth', () => {
   });
 
   it('oauthRefresh returns null on invalid_grant (the reauth trigger)', async () => {
-    const fm = vi.spyOn(globalThis, 'fetch')
+    vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
     expect(await oauthRefresh(gmailManifest, gmailManifest.authMethods[0], 'revoked')).toBeNull();
   });

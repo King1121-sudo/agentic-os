@@ -1,10 +1,7 @@
 'use client';
 import Shell from '@/components/Shell';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ReactFlow, Background, Controls, MiniMap, applyNodeChanges, applyEdgeChanges, addEdge,
-  type Node, type Edge, type NodeChange, type EdgeChange, type Connection, Handle, Position,
-} from '@xyflow/react';
+import { useCallback, useState } from 'react';
+import { ReactFlow, Background, Controls, MiniMap, applyNodeChanges, applyEdgeChanges, addEdge, type Node, type Edge, type NodeChange, type EdgeChange, type Connection, Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api, post, patch, usePoll, fmtAgo } from '@/lib/api';
 
@@ -74,7 +71,6 @@ const CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder?: 
 export default function FlowsPage() {
   const flows = usePoll(() => api('/api/flows'), 8000) as any[] | null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = (flows ?? []).find(f => f.id === selectedId) ?? null;
   const runs = usePoll(() => selectedId ? api(`/api/flows/${selectedId}/runs`) : Promise.resolve([]), 4000, [selectedId]) as any[] | null;
   const activeRun = (runs ?? []).find(r => ['running', 'waiting', 'paused', 'interrupted'].includes(r.status)) ?? null;
   const activeRunLive = usePoll(() => activeRun ? api(`/api/flow-runs/${activeRun.id}`) : Promise.resolve(null), 2000, [activeRun?.id]) as any | null;

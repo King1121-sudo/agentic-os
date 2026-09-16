@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ExecutionStoreProvider } from '@/lib/execution-store';
 
 export const metadata: Metadata = {
   title: 'Agentic OS',
@@ -23,7 +24,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {/* One execution source of truth for the whole client — survives page
+            navigation so background executions keep streaming in (§22/§45). */}
+        <ExecutionStoreProvider>{children}</ExecutionStoreProvider>
+      </body>
     </html>
   );
 }

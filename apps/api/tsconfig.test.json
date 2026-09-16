@@ -1,0 +1,18 @@
+{
+  // Typecheck config for the test suite.
+  //
+  // `tsconfig.json` excludes `src/**/*.test.ts` so the production build never
+  // emits test code — but that also meant a type error inside a test file was
+  // never caught by CI, only by running the tests. This config covers the same
+  // sources INCLUDING tests, and is wired into `npm run typecheck`.
+  //
+  // noEmit: this exists purely to type-check, it never produces output.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "src",
+    "outDir": "dist-test"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

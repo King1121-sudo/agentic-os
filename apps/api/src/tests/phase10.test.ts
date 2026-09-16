@@ -248,8 +248,8 @@ describe('phase 10 — dashboard layouts', () => {
     expect(first.widgets.length).toBe(7);
     // save a custom grid
     const custom = [
-      { id: 'a', kind: 'counts', width: 1 as const },
-      { id: 'b', kind: 'approvals', width: 2 as const },
+      { id: 'a', kind: 'counts' as const, width: 1 as const },
+      { id: 'b', kind: 'approvals' as const, width: 2 as const },
     ];
     const saved = await setLayout(db, userId, custom);
     expect(saved.widgets).toEqual(custom);

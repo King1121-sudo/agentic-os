@@ -44,7 +44,7 @@ export const AUTONOMY_LEVELS: Record<AutonomyLevel, string> = {
 
 // ─── event catalog (kernel-wide) ───────────────────────────────────────────
 export type EventType =
-  | 'command.executed' | 'agent.started' | 'agent.thinking' | 'plan.created'
+  | 'command.executed' | 'command.acknowledged' | 'agent.started' | 'agent.thinking' | 'plan.created'
   | 'agent.executing' | 'tool.executed' | 'tool.denied' | 'tool.failed'
   | 'skill.executed' | 'agent.paused' | 'agent.resumed' | 'agent.stopped'
   | 'agent.completed' | 'agent.failed' | 'approval.requested' | 'approval.decided'

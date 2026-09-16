@@ -10,9 +10,9 @@
  * provider+account), shared identity (Google: one identity, many services).
  */
 import * as crypto from 'crypto';
-import type { DataPort } from '../../infra/types';
+import { DataPort } from '../../infra/types';
 import { iso } from '../../infra/types';
-import type { AuthMethod, ProviderManifest, CapabilityDef } from './types';
+import { AuthMethod, ProviderManifest } from './types';
 
 export interface OAuthFlowConfig {
   authorizeUrl: string;

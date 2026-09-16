@@ -1,6 +1,24 @@
 # Agentic OS — Roadmap
 
-> **Status: Phases 1–13 complete + JARVIS UI transformation.** All milestones below are shipped and verified (165 tests, typecheck clean, production builds green, migrations idempotent on fresh DBs). See `CHANGELOG.md` for per-phase history.
+> **Status: Phases 1–13 complete + JARVIS console transformation + real-agent experience layer.** All milestones below are shipped and verified (189 tests, typecheck clean, production builds green, migrations idempotent on fresh DBs). See `CHANGELOG.md` for per-phase history.
+
+## Phase UI-2 — JARVIS Real Agent Experience ✅ (v0.15.0, 2026-09-09)
+
+Behavior pass over the interaction layer: the OS now behaves like the runtime it visualizes. Real state only — no fake activity, no fake progress, no exposed reasoning.
+
+- [x] **Phase A — Audit**: command pipeline (`POST /api/command` → zod → `routeCommand`: 10 local branches or `runtime.run()`), agent runtime (full safe-telemetry event chain, delegation graph, pause/resume/stop, working memory, token pump), event bus (persisted + SSE with replay), execution records — all confirmed REAL and complete. Gap: no immediate ack, no client execution store, command surface navigated away, no global activity, single breathing animation.
+- [x] **Phase B — Execution model**: reused the existing `executions` table + runtime state machine as the single source of truth; client store mirrors it event-idempotently and reconciles on reconnect. No duplicate backend state machine.
+- [x] **Phase C — Realtime**: reused the existing SSE `/api/stream` + bus events; ZERO new event types beyond `command.acknowledged`; store dedupes by event id.
+- [x] **Phase D — Acknowledgement**: honest per-route acks naming the real agent/action; `ack` on every response; `command.acknowledged` event.
+- [x] **Phase E — Breathing Core**: state-specific organic breathing (idle/listening/thinking/executing/waiting/approval/error) keyed to live store state; reduced-motion-safe; text label always present.
+- [x] **Phase F — Visible execution**: LiveExecutionPanel — human activity lines from real events, Level-2 technical detail toggle, streaming buffer, honest failure surface.
+- [x] **Phase G — Agent presence**: panel agent badge + topbar `N ACTIVE AGENTS` popover, all from real agent statuses/executions.
+- [x] **Phase H — Tool/skill visibility**: real `tool.executed` (name, latency, summary), `skill.executed` (chain, version), denials and failures surfaced — never invented.
+- [x] **Phase I — Streaming**: existing `agent.token` volatile pump renders into the panel's live stream box.
+- [x] **Phase J — Approval/failure/cancel**: inline Approve/Deny on genuine `approval_required` pause (live-verified end-to-end), real stop → `cancelled`, honest error display.
+- [x] **Phase K — Background**: root-level store survives navigation; topbar indicator global.
+- [x] **Phase L — Voice**: same `POST /api/command` route for voice transcripts (existing Web Speech wiring); state machine typed for future TTS (speaking/interrupted reserved, never rendered fake).
+- [x] **Phase M — QA**: 170/170 tests (5 new contract tests), live matrix — 8 ack branches, complex command §42, approval §24, cancellation §44, background §45, simple command §41. Fixed stale "Phase 8 not shipped" command-center copy found during the pass.
 
 ## Phase UI — JARVIS Console Transformation ✅ (v0.14.0, 2026-09-09)
 

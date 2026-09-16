@@ -1,4 +1,4 @@
-# Agentic OS — Architecture (v0.12.0)
+# Agentic OS — Architecture (v0.18.0)
 
 ## 1. Ports & adapters (the replaceability spine)
 
@@ -12,7 +12,7 @@ VectorIndexPort ─ LocalVectorIndex (hash-128 cosine)    │ PgVectorIndex (pgv
 IntegrationPort  (registry + GitHub/Gmail/Slack adapters)
 ```
 
-All SQL is dialect-neutral: TEXT/INTEGER/REAL columns, app-side UUIDs, `?`-params (the Pg adapter converts to `$n`). Ten migrations (`sql/001…010`, tracked via `schema_migrations`) run identically on both drivers; fresh-DB boot applies all ten idempotently (41 tables).
+All SQL is dialect-neutral: TEXT/INTEGER/REAL columns, app-side UUIDs, `?`-params (the Pg adapter converts to `$n`). Eleven migrations (`sql/001…011`, tracked via `schema_migrations`) run identically on both drivers; fresh-DB boot applies all eleven idempotently (46 tables).
 
 ## 2. Kernel execution pipeline
 
@@ -72,7 +72,7 @@ Voice is purely an input modality: the transcript fills the same command input a
 
 ## 5. Data model
 
-41 tables across `sql/001–010`: users, sessions, model_providers, models, agents, executions, generations, memories, memory_entities, entities, links, projects, sprints, tasks, task_dependencies, milestones, deadline_alerts, skills, skill_versions, tool_executions, events, audit_logs, approvals, notifications, notification_prefs, push_subscriptions, dashboard_layouts, agent_messages, flows, flow_runs, automations, automation_runs, integrations, oauth_states, integration_events, working_memory, schema_migrations (+ indexes).
+46 tables across `sql/001–011`: users, sessions, model_providers, models, agents, executions, generations, memories, memory_entities, memory_entity_scan, entities, links, projects, sprints, tasks, task_dependencies, milestones, deadline_alerts, skills, skill_versions, skill_executions, tool_executions, events, audit_logs, approvals, notifications, notification_prefs, push_subscriptions, dashboard_layouts, agent_messages, flows, flow_versions, flow_runs, automations, automation_runs, automation_cron_state, integrations, integration_connections, integration_secrets, integration_events, integration_webhooks, integration_webhook_dedup, integration_sync_state, oauth_states, working_memory, schema_migrations (+ indexes).
 
 ## 6. Web application
 
@@ -84,7 +84,37 @@ Next.js App Router, single global token stylesheet (dark/light), shared Shell (r
 - Add a tool → `ToolDef` in `modules/tools.ts` (risk/scope/schema required)
 - Add an integration → implement `ServiceAdapter`, register in `IntegrationService`
 - Add a widget → `WIDGET_REGISTRY` in `modules/notify.ts` + renderer in the home page
+- Add an endpoint → put it in the matching `routes/<subsystem>.ts` (or add a
+  module and register it in `app.ts`, the composition root); deps arrive via
+  `RouteContext`, so a module never imports the kernel directly
 - Swap drivers → set `DATABASE_URL` / `REDIS_URL`; no code changes
+
+## 8. HTTP layer layout
+
+`app.ts` is a **composition root only** (58 lines): it builds the Fastify
+instance, registers the session-auth hook, and wires one module per subsystem.
+The 118 routes live in `routes/*.ts`, moved verbatim from the original monolith:
+
+```
+routes/context.ts       RouteContext (the dep bundle) + shared helpers
+routes/auth.ts          session hook, login/logout/me, health
+routes/agents.ts        agents, models, tools, skills
+routes/memory.ts        memory, semantic search, working memory
+routes/projects.ts      projects, tasks, sprints, dependencies, milestones, rollups
+routes/flows.ts         flows + flow runs
+routes/automations.ts   automations + webhook intake
+routes/integrations.ts  integration platform
+routes/graph.ts         links, entities, knowledge graph
+routes/approvals.ts     approval queue + decisions
+routes/notifications.ts notifications, dashboard layout, push channel
+routes/telemetry.ts     generations, events, audit, universal search, SSE
+routes/command.ts       command center (§29)
+routes/supervision.ts   mobile briefing, emergency stop, dashboard
+```
+
+Each module receives a `RouteContext` and destructures only the deps it uses, so
+the route bodies needed no rewriting when they moved — which is what makes the
+118-route parity check meaningful.
 
 ## 8. Operational boundaries (honest limits)
 
@@ -93,3 +123,24 @@ Next.js App Router, single global token stylesheet (dark/light), shared Shell (r
 - Voice input requires a browser with SpeechRecognition; there is no speech synthesis
 - SSE fan-out beyond one process requires the Redis broker
 - No FK constraints in SQL (app-enforced relationships) — deliberate for the dual-dialect constraint
+- **Authorization is owner-scoped on `user_id` resources only** (executions, working memory,
+  generations, approvals, flow runs) and the system telemetry surfaces remain global — see
+  `docs/authorization.md` for the full model and the residual gaps
+
+## 9. Authorization (ownership)
+
+Several tables carry an owner column, and every route touching them is scoped
+(`modules/authz.ts`):
+
+| Resource | Owner column | Scoping |
+|---|---|---|
+| executions, working_memory, flow_runs, memories, notifications | `user_id` | enforced — list, read, control |
+| generations, approvals, tool_executions | *none* — inherit the execution's `user_id` | enforced via join |
+| tasks, projects, sprints, milestones, flows, automations | `created_by` (a *creator* stamp, not an owner) | **shared** — deliberate, revisit before multi-tenant |
+| agents, skills, entities, links, events, audit_logs | — | global by design |
+
+A non-owner always receives **404, never 403** — a 403 would confirm the record
+exists. Ownerless rows (`NULL`/empty owner: seeded data, and rows written by an
+automation or tool with no user in context) stay shared, which preserves the
+pre-existing behaviour for system rows. `apps/api/src/tests/authz.test.ts`
+proves the whole matrix with two real sessions and is mutation-verified.

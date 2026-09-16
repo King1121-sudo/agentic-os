@@ -13,11 +13,11 @@
  *    announced on the bus (`system.emergency_stop`); the supervisor gets a
  *    notification confirming the world state after the stop.
  */
-import type { DataPort } from '../infra/types';
-import { iso, uuid } from '../infra/types';
-import type { EventBus } from '../kernel/bus';
-import type { AgentRuntime } from './runtime';
-import type { FlowEngine } from './flows';
+import { DataPort } from '../infra/types';
+import { iso } from '../infra/types';
+import { EventBus } from '../kernel/bus';
+import { AgentRuntime } from './runtime';
+import { FlowEngine } from './flows';
 import * as store from './store';
 
 // ─── mobile briefing ─────────────────────────────────────────────────────────
@@ -47,7 +47,10 @@ export async function mobileBriefing(db: DataPort, userId: string): Promise<Mobi
   const [agents, openTasks, approvals, events, notes] = await Promise.all([
     store.listAgents(db),
     store.listTasks(db, { limit: 100 }),
-    store.listApprovals(db, 'pending'),
+    // Deliberately UNSCOPED: the supervisor briefing is the one surface whose
+    // job is the whole OS — see docs/authorization.md. The approvals queue is
+    // still owner-scoped on the normal API (/api/approvals).
+    store.listApprovals(db, { status: 'pending' }),
     bus_listEvents(db, 12),
     store.listNotifications(db, userId, 'unread'),
   ]);

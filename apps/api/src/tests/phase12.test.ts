@@ -11,7 +11,7 @@ import { ModelRouter } from '../gateway/router';
 import { BuiltinProvider } from '../gateway/providers';
 import { ToolRegistry, createBuiltinTools } from '../modules/tools';
 import { AgentRuntime } from '../modules/runtime';
-import { FlowEngine } from '../modules/flows';
+import { FlowEngine, getRun } from '../modules/flows';
 import * as store from '../modules/store';
 import { mobileBriefing, EmergencyStop } from '../modules/supervision';
 
@@ -90,7 +90,7 @@ describe('phase 12 — mobile briefing', () => {
     const b = await mobileBriefing(db, userId);
     const t = b.open_tasks.find((x: any) => x.title === 'Do the thing');
     expect(t).toBeTruthy();
-    expect(t.project_name).toBe('P12 Test');
+    expect(t!.project_name).toBe('P12 Test');
   });
 });
 
@@ -132,7 +132,7 @@ describe('phase 12 — emergency stop', () => {
     // the execution and flow run are terminal now
     const ex = await store.getExecution(db, exec.id);
     expect(['cancelled', 'completed']).toContain(ex!.status);
-    const fr = await flowEngine.getRun?.(run.id) ?? await import('../modules/flows').then(m => m.getRun(db, run.id));
+    const fr = await getRun(db, run.id);
     expect(['cancelled', 'failed']).toContain(fr!.status);
   });
 

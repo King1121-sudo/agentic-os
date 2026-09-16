@@ -1,6 +1,6 @@
 'use client';
 import Shell from '@/components/Shell';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { api, post, usePoll, fmtAgo } from '@/lib/api';
 
 const AUTONOMY = ['L0 Observe', 'L1 Suggest', 'L2 Approval', 'L3 Auto', 'L4 Autonomous'];

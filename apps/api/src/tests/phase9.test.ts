@@ -13,7 +13,7 @@ import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
 import { InProcessBroker } from '../infra/broker';
 import { EventBus } from '../kernel/bus';
-import { IntegrationService, redactSecrets } from '../modules/integrations/service';
+import { redactSecrets } from '../modules/integrations/service';
 import { verifyWebhookSignature, claimWebhookEvent, intakeWebhook } from '../modules/integrations/webhooks';
 import { oauthStart, oauthExchange, oauthRefresh, needsRefresh } from '../modules/integrations/oauth';
 import { RateLimiter } from '../modules/integrations/rate-limit';
@@ -21,7 +21,7 @@ import { githubManifest, slackManifest, gmailManifest, GitHubPlatformAdapter, Te
 import { resolveAuthConfigStatus } from '../modules/integrations/types';
 import { createIntegrationPlatform } from '../modules/integrations/index';
 import { encryptSecret, decryptSecret, __resetVaultKeyForTests } from '../modules/vault';
-import type { ProviderAdapter } from '../modules/integrations/types';
+
 
 let db: SqliteDataPort;
 let bus: EventBus;
@@ -278,7 +278,6 @@ describe('platform — sync engine + rate limiter', () => {
 
 describe('platform — provider catalog + config status', () => {
   it('lists all 7 providers with auth-method-shaped UI metadata', () => {
-    const svc = new IntegrationService({ db, bus });
     // register everything via the production factory
     const platform = createIntegrationPlatform({ db, bus });
     const list = platform.listProviders() as any[];

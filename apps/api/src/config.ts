@@ -39,5 +39,5 @@ export const config = {
   allowShell: str(process.env.AGENTIC_ALLOW_SHELL, '0') === '1',
   /** Phase 4: hot-loadable skill definitions (JSON/YAML). */
   skillsDir: process.env.AGENTIC_SKILLS_DIR ?? path.resolve(dataDir, '..', 'skills'),
-  version: '0.12.0',
+  version: '0.18.0',
 };

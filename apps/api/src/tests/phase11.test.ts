@@ -5,15 +5,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
-import {
-  deriveCoOccurrenceLinks, graphSnapshot, graphNeighborhood, graphQuery,
-} from '../modules/graph';
+import { deriveCoOccurrenceLinks, graphSnapshot, graphNeighborhood, graphQuery } from '../modules/graph';
 
 let db: SqliteDataPort;
 
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 let mem1: string, mem2: string, mem3: string;
 
@@ -111,7 +108,7 @@ describe('phase 11 — graph snapshot', () => {
     const ids = snap.nodes.map(n => n.id);
     expect(ids).toContain('tech:pgvector');
     expect(ids).toContain('person:ada-lovelace');
-    expect(ids).not.toContain(expect.anything && undefined); // sanity
+    expect(ids.every(id => typeof id === 'string' && id.includes(':'))).toBe(true); // every ref is "<kind>:<slug>"
     // executions are excluded from the default visual set
     // (none inserted here, but assert the filter contract via kinds param)
     // pgvector has derived links to postgres + redis (+1 explicit mentions)

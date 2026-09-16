@@ -1,13 +1,18 @@
 'use client';
 /**
  * The OS shell: persistent rail, live topbar, command palette (⌘K),
- * activity ticker, approval banner, notification center.
- * JARVIS visual language — one HUD world.
+ * approval banner, notification center, and the GLOBAL ACTIVE OPERATIONS
+ * indicator fed by the ExecutionStore (§23/§33).
+ *
+ * The shell no longer owns its own SSE subscription — the ExecutionStore
+ * (root layout) is the one event source; this component reads from it.
  */
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { api, post, useEventStream, fmtTime, fmtAgo } from '@/lib/api';
+import { api, post, fmtAgo } from '@/lib/api';
+import { useExecutionStore } from '@/lib/execution-store';
+import type { LiveExecution } from '@/lib/execution-store';
 
 const NAV = [
   { href: '/', icon: '⌂', label: 'Home', key: '1' },
@@ -23,29 +28,19 @@ const NAV = [
   { href: '/settings', icon: '⚙', label: 'Settings', key: '0' },
 ];
 
-export type OsEvent = {
-  id: string; type: string; actor_type: string; data: any; created_at: string;
-};
+const ACTIVE_STATES = ['received', 'understanding', 'planning', 'executing', 'waiting', 'approval_required', 'completing'];
 
 export default function Shell({ children, title }: { children: React.ReactNode; title?: string }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [events, setEvents] = useState<OsEvent[]>([]);
   const [notifs, setNotifs] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [opsOpen, setOpsOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [clock, setClock] = useState('');
-
-  // -- live event stream --
-  const onEvent = useCallback((ev: OsEvent) => {
-    setEvents(prev => [ev, ...prev].slice(0, 60));
-    if (ev.type === 'notification.created' || ev.type === 'approval.requested') {
-      refreshNotifs();
-    }
-  }, []);
-  const { connected } = useEventStream(onEvent);
+  const store = useExecutionStore();
 
   const refreshNotifs = useCallback(async () => {
     try {
@@ -60,7 +55,21 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
   useEffect(() => { refreshNotifs(); }, [refreshNotifs]);
 
-  // -- live clock (the OS knows the time) --
+  // live event stream → refresh the bell when relevant events arrive
+  useEffect(() => {
+    const es = new EventSource('/api/stream');
+    es.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        if (ev?.type === 'notification.created' || ev?.type === 'approval.requested' || ev?.type === 'approval.decided') {
+          refreshNotifs();
+        }
+      } catch { /* skip */ }
+    };
+    return () => es.close();
+  }, [refreshNotifs]);
+
+  // live clock
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     tick();
@@ -68,11 +77,11 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
     return () => clearInterval(t);
   }, []);
 
-  // -- keyboard shortcuts --
+  // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen(o => !o); }
-      else if (e.key === 'Escape') { setPaletteOpen(false); setNotifOpen(false); }
+      else if (e.key === 'Escape') { setPaletteOpen(false); setNotifOpen(false); setOpsOpen(false); }
       else if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         e.preventDefault(); setPaletteOpen(true);
       }
@@ -93,6 +102,10 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
 
   const unreadCount = notifs.length;
   const activeLabel = NAV.find(n => n.href === pathname)?.label ?? (title ?? 'Agentic OS');
+  const activeExecs: LiveExecution[] = useMemo(
+    () => store.order.map(id => store.executions[id]).filter(ex => ex && ACTIVE_STATES.includes(ex.state)),
+    [store.order, store.executions],
+  );
 
   return (
     <div className="shell">
@@ -117,8 +130,37 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
           <span className="crumb">AGENTIC OS v0.13</span>
           <div style={{ flex: 1 }} />
           <span className="mono faint xs" aria-hidden="true" style={{ letterSpacing: '0.08em' }}>{clock}</span>
-          <div className={`live ${connected ? '' : 'off'}`}>
-            <span className="pulse" /> {connected ? 'LIVE' : 'OFFLINE'}
+
+          {/* §23/§33 — global active operations, visible from anywhere */}
+          {activeExecs.length > 0 && (
+            <div style={{ position: 'relative' }}>
+              <button className="active-ops" onClick={() => setOpsOpen(o => !o)}
+                aria-label={`${activeExecs.length} active operations — open details`}
+                aria-expanded={opsOpen}>
+                <span className="ops-pulse" aria-hidden="true" />
+                {activeExecs.length} ACTIVE {activeExecs.length === 1 ? 'AGENT' : 'AGENTS'}
+              </button>
+              {opsOpen && (
+                <div className="active-ops-pop" role="dialog" aria-label="Active operations">
+                  {activeExecs.map(ex => (
+                    <div key={ex.id} className="active-ops-row">
+                      <span className={`dot ${ex.state === 'approval_required' ? 'd-amber' : ex.state === 'failed' ? 'd-red' : 'd-cyan'}`} />
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <div className="small" style={{ fontWeight: 600 }}>{ex.agent}</div>
+                        <div className="xs faint" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {ex.activity.slice(-1)[0]?.label ?? ex.state}
+                        </div>
+                      </div>
+                      <a className="xs dim" href={`/activity?exec=${ex.id}`}>trace ↗</a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={`live ${store.connected ? '' : 'off'}`}>
+            <span className="pulse" /> {store.connected ? 'LIVE' : 'OFFLINE'}
           </div>
           <button onClick={() => setPaletteOpen(true)}>
             Command <span className="kbd">⌘K</span>
@@ -175,23 +217,15 @@ export default function Shell({ children, title }: { children: React.ReactNode; 
         <main className="content" id="os-content">{children}</main>
 
         <footer style={{ borderTop: '1px solid var(--border)', padding: '6px 16px', display: 'flex', gap: 16, background: 'var(--bg-panel)' }}>
-          <span className="xs faint mono">events {events.length ? `· last ${fmtTime(events[0].created_at)}` : ''}</span>
-          <div style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }} aria-hidden="true">
-            {events[0] && (
-              <span className="xs mono" style={{ color: 'var(--fg-faint)' }}>
-                latest: <span style={{ color: 'var(--cyan)' }}>{events[0].type}</span> {JSON.stringify(events[0].data).slice(0, 120)}
-              </span>
-            )}
-          </div>
+          <span className="xs faint mono">
+            {store.connected ? 'live stream connected' : 'reconnecting…'}
+          </span>
           <span className="xs faint mono">⌘K command · / search</span>
         </footer>
       </div>
 
       {paletteOpen && (
-        <CommandPalette
-          onClose={() => setPaletteOpen(false)}
-          onRouted={(msg) => { setPaletteOpen(false); }}
-        />
+        <CommandPalette onClose={() => setPaletteOpen(false)} />
       )}
     </div>
   );
@@ -203,15 +237,15 @@ async function decide(id: string, d: 'approve' | 'deny', refresh: () => void) {
 }
 
 // --- command palette / command center --------------------------------------
-function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: (msg?: string) => void }) {
+function CommandPalette({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const [q, setQ] = useState('');
   const [mode, setMode] = useState<'command' | 'search'>('command');
   const [results, setResults] = useState<any[] | null>(null);
   const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const store = useExecutionStore();
 
-  // local command list (navigation + OS actions)
   const commands = useMemo(() => [
     { icon: '⌂', label: 'Go to Home', run: () => router.push('/') },
     { icon: 'Ⓢ', label: 'Go to Agents', run: () => router.push('/agents') },
@@ -225,11 +259,15 @@ function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: 
 
   async function runCommand(text: string) {
     setBusy(true); setReply(null);
+    store.trackCommand(text);
     try {
       const res = await post<any>('/api/command', { text });
-      if (res.kind === 'execution') {
-        router.push(`/activity?exec=${encodeURIComponent(res.execution_id)}`);
-        onClose();
+      if (res.kind === 'execution' && res.execution_id) {
+        // register in the global store; the command surface on Home shows it,
+        // the topbar indicator shows it — but close the palette immediately
+        store.register(res.execution_id, { agent: res.agent_name ?? 'Agent', ack: res.ack, input: text, state: 'received' });
+        setReply(res.ack ?? `Running on ${res.agent_name} — follow it on Home or Activity.`);
+        setTimeout(onClose, 600);
       } else {
         setReply(res.text);
       }
@@ -275,7 +313,7 @@ function CommandPalette({ onClose, onRouted }: { onClose: () => void; onRouted: 
                   <span style={{ color: 'var(--cyan)' }}>❯</span>
                   <div className="grow">
                     <div className="small" style={{ fontWeight: 600 }}>Ask the OS: “{q}”</div>
-                    <div className="xs dim">routes to Hermes agent → planner → tools → memory</div>
+                    <div className="xs dim">routes to agent → planner → tools → memory</div>
                   </div>
                 </div>
               )}

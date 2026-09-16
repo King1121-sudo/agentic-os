@@ -1,8 +1,5 @@
 /** Kernel-level types: registries, tool interface, model gateway port. */
-import type {
-  Capability, Plan, PlanStep, TraceEntry, Observation, ToolRisk, AutonomyLevel,
-  AgentRecord, ExecutionRecord, AgentStatus, ExecutionStatus,
-} from '@agentic/contracts';
+import { Capability, Plan, PlanStep, TraceEntry, Observation, ToolRisk, AutonomyLevel, AgentRecord } from '@agentic/contracts';
 
 export interface ToolContext {
   execution_id: string | null;

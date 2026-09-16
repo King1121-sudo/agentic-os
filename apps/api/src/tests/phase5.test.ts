@@ -14,7 +14,7 @@ import * as store from '../modules/store';
 import * as memory from '../modules/memory';
 import { setVectorIndex } from '../modules/memory';
 import { LocalVectorIndex, LocalEmbeddingProvider } from '../modules/vector';
-import { extractEntities, linkMemoryEntities, backfillEntities, entityIdFor } from '../modules/entities';
+import { extractEntities, backfillEntities } from '../modules/entities';
 import { openWorkingMemory, appendFact, closeWorkingMemory, getWorkingMemory, renderWorkingMemory } from '../modules/workingmemory';
 import { embed, cosine } from '../modules/text';
 
@@ -175,7 +175,6 @@ describe('phase 5 — entity extraction', () => {
     const { record } = await memory.createMemory(db, {
       user_id: 'u1', type: 'semantic', content: 'Another note about pgvector and Redis.', importance: 5,
     });
-    const entId = `tech:pgvector`;
     const before = await db.query<any>('SELECT COUNT(*) AS n FROM memory_entities WHERE memory_id = ?', [record.id]);
     expect(Number(before[0].n)).toBeGreaterThan(0);
     await memory.deleteMemory(db, record.id);

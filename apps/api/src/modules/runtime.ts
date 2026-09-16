@@ -16,6 +16,7 @@ import { evaluateGate, type ToolContext } from '../kernel/types';
 import * as store from './store';
 import { resolveSkillChain, requiredToolsFor, recordSkillExecution } from './skills';
 import { searchMemory, createMemory } from './memory';
+import { isOwnedBy } from './authz';
 import { openWorkingMemory, appendFact, closeWorkingMemory, renderWorkingMemory, getWorkingMemory } from './workingmemory';
 import { config } from '../config';
 import type {
@@ -479,6 +480,11 @@ export class AgentRuntime {
     const rows = await this.db.query<any>('SELECT * FROM approvals WHERE id = ?', [approvalId]);
     const appr = rows[0];
     if (!appr || appr.status !== 'pending') return false;
+    // An approval inherits its execution's owner. Only that user may decide it —
+    // otherwise any authenticated user could wave through someone else's
+    // high-risk action. Non-owners get the same `false` as a missing approval.
+    const exec = await store.getExecution(this.db, appr.execution_id);
+    if (!isOwnedBy(exec, userId)) return false;
     await store.decideApproval(this.db, approvalId, decision, userId);
     const waiter = this.approvalWaiters.get(approvalId);
     this.approvalWaiters.delete(approvalId);

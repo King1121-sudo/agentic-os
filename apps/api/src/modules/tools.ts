@@ -6,16 +6,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { DataPort } from '../infra/types';
+import { DataPort } from '../infra/types';
 import { iso, uuid } from '../infra/types';
-import type { ToolDef, ToolContext } from '../kernel/types';
+import { ToolDef } from '../kernel/types';
 export type { ToolDef } from '../kernel/types';
 import { config } from '../config';
 import * as store from './store';
 import { createMemory, searchMemory } from './memory';
 import * as projects from './projects';
 import { clearDeadlineAlerts } from './automations';
-import type { AgentRuntime } from './runtime';
+import { AgentRuntime } from './runtime';
 
 /** Phase 3: set by main.ts after the runtime is constructed (avoids the cycle). */
 let runtimeRef: AgentRuntime | null = null;
@@ -24,7 +24,7 @@ export function setRuntimeRef(r: AgentRuntime): void { runtimeRef = r; }
 const SANDBOX = path.resolve(config.dataDir, 'sandbox');
 
 function sandboxPath(rel: string): string {
-  const p = path.resolve(SANDBOX, rel.replace(/^[.\/\\]+/, ''));
+  const p = path.resolve(SANDBOX, rel.replace(/^[.\\/]+/, ''));
   if (p !== SANDBOX && !p.startsWith(SANDBOX + path.sep)) throw new Error(`Path escapes sandbox: ${rel}`);
   return p;
 }
@@ -160,7 +160,7 @@ export function createBuiltinTools(db: DataPort): ToolDef[] {
         task_title: { type: 'string', required: false, description: 'Dependent task by title (resolved if ids absent)' },
         depends_on_title: { type: 'string', required: false, description: 'Dependency task by title (resolved if ids absent)' },
       },
-      async execute(args, ctx) {
+      async execute(args, _ctx) {
         // resolve by title when ids are absent (heuristic planner passes titles)
         const resolveTask = async (id?: string, title?: string): Promise<string | null> => {
           if (id) return String(id);

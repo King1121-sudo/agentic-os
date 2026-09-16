@@ -5,7 +5,7 @@ import * as path from 'path';
 import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
 import { ModelRouter } from '../gateway/router';
-import { BuiltinProvider, GeminiProvider, abortErr } from '../gateway/providers';
+import { BuiltinProvider, GeminiProvider } from '../gateway/providers';
 import { lookupCosts } from '../gateway/costs';
 
 let db: SqliteDataPort;
@@ -48,7 +48,6 @@ describe('phase 2 — streaming', () => {
     const ctl = new AbortController();
     const seen: string[] = [];
     // abort after the first few tokens
-    const seen0 = new Promise<void>(res => { const t = setTimeout(res, 60); return t; });
     setTimeout(() => ctl.abort(), 80);
     await expect(router.generateStream(
       { capability: 'reasoning', prompt: 'cancel me mid stream with plenty of words to stream' },

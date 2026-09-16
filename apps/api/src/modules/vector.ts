@@ -17,8 +17,8 @@
  * driver carries the hash embeddings forward; a real provider later can
  * re-embed via POST /api/memory/reembed).
  */
-import type { DataPort } from '../infra/types';
-import type { VectorHit } from '@agentic/contracts';
+import { DataPort } from '../infra/types';
+import { VectorHit } from '@agentic/contracts';
 
 export interface VectorIndexPort {
   kind: 'local' | 'pgvector';
@@ -38,7 +38,7 @@ export interface EmbeddingProvider {
 
 /** Deterministic local hash embedding (kept in sync with memory.embed — same
  *  function, re-exported so drivers don't import in circles). */
-import { embed as hashEmbed, tokenize } from '../modules/memory';
+import { embed as hashEmbed } from '../modules/memory';
 
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   id = 'local-hash-128';

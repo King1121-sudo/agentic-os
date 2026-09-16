@@ -1,6 +1,6 @@
-# Agentic OS — v0.12.0
+# Agentic OS — v0.18.0
 
-An **AI-native operating environment**: agents, memory, tools, skills, flows, automations, integrations, a knowledge graph, and a living JARVIS command center as one coherent system. **Phases 1–12 complete and verified.**
+An **AI-native operating environment**: agents, memory, tools, skills, flows, automations, integrations, a knowledge graph, and a living JARVIS command center as one coherent system. **Phases 1–13 complete and verified, plus the JARVIS console and real-agent experience layers.**
 
 ```
 User (text / voice / UI / automation / webhook)
@@ -43,7 +43,7 @@ With no `.env` the kernel runs on the **builtin deterministic provider** (zero n
 - **`/`** — the living command center: central core state (standby / thinking / executing / approval required), orbiting agent satellites, context field, realtime event rail, attention panel, and the command surface (text + search + optional voice via browser SpeechRecognition). The Phase 10 widget dashboard remains via the **▼ Classic dashboard** toggle.
 - **`/mobile`** — installable phone-first supervisor PWA: briefing, stat tiles, one-tap approvals, agent roster, and a two-step **EMERGENCY STOP** that cancels every running execution/flow and pauses automations.
 
-## Subsystems (all live, phases 1–12)
+## Subsystems (all live, phases 1–13)
 
 | Subsystem | Where |
 |---|---|
@@ -63,12 +63,34 @@ With no `.env` the kernel runs on the **builtin deterministic provider** (zero n
 | Mobile supervision (briefing API, emergency stop) | `modules/supervision.ts` |
 | Web shell (Next.js, JARVIS cockpit, ⌘K palette, SSE) | `apps/web` |
 
-## Testing
+## Verification
+
+CI (`.github/workflows/ci.yml`) runs all four on every push and PR.
 
 ```bash
-npm test          # 149 tests across 12 files: kernel, gateway, memory, security,
-                  # skills, projects, flows, automations, integrations, push, graph, supervision
+npm run lint      # ESLint — 0 errors, warnings capped by a ratchet (see eslint.config.mjs)
+npm run typecheck # api + api tests + web
+npm test          # 189 tests across 15 files: kernel, gateway, memory, security,
+                  # authorization, skills, projects, flows, automations, integrations,
+                  # push, graph, supervision, jarvis
+npm run verify    # lint + typecheck + test in one shot
+npm run smoke     # live HTTP smoke test — needs a running API (see below)
+
+npm run build     # contracts + api (tsc) + web (next build)
 ```
+
+The vitest suite drives the real Fastify app via `app.inject()` (in-process, no
+socket). `scripts/smoke.sh` covers what only breaks over a real connection — the
+auth guard, every route module, the command-center branches, and the SSE stream:
+
+```bash
+npm run dev:api            # terminal 1
+npm run smoke              # terminal 2 — 39 checks
+```
+
+The lint gate uses `--max-warnings`, so **new** warnings fail the build while
+existing debt does not. When you pay debt down, lower that number — it is the
+only thing keeping the count from creeping back up.
 
 ## Production
 

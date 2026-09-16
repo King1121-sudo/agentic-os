@@ -1,6 +1,6 @@
 {
   "name": "agentic-os",
-  "version": "0.12.0",
+  "version": "0.18.0",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -14,10 +14,22 @@
     "dev:api": "npm run build -w packages/contracts && npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "start:api": "npm run start -w apps/api",
-    "test": "npm run build -w packages/contracts && npm run test -w apps/api"
+    "test": "npm run build -w packages/contracts && npm run test -w apps/api",
+    "lint": "eslint . --max-warnings=884",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc -p apps/api/tsconfig.json --noEmit && tsc -p apps/api/tsconfig.test.json && tsc -p apps/web/tsconfig.json --noEmit",
+    "verify": "npm run lint && npm run typecheck && npm test",
+    "smoke": "bash scripts/smoke.sh"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "esbuild@0.21.5": true
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "typescript-eslint": "8.70.0"
   }
 }

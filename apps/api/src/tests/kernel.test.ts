@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { SqliteDataPort } from '../infra/sqlite.adapter';
 import { runMigrations } from '../infra/migrations';
-import { createMemory, searchMemory, decayMemories, consolidateMemories, embed, cosine } from '../modules/memory';
+import { createMemory, searchMemory, consolidateMemories, embed, cosine } from '../modules/memory';
 import * as store from '../modules/store';
 import { heuristicPlan } from '../gateway/providers';
 import { evaluateGate } from '../kernel/types';
@@ -76,7 +76,7 @@ describe('planner (builtin heuristic)', () => {
 
   it('extracts URLs for http.fetch', () => {
     const plan = heuristicPlan('Fetch https://example.com/data and summarize it', null);
-    const step = plan.steps.find(s => s.tool === 'http.fetch') as any;
+    const step = plan.steps.find(s => 'tool' in s && s.tool === 'http.fetch') as any;
     expect(step.args.url).toBe('https://example.com/data');
   });
 
