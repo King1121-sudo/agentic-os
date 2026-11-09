@@ -11,3 +11,4 @@ apps/data/
 output/
 *.tsbuildinfo
 .DS_Store
+apps/web/chrome-profile/
